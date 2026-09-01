@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
-from qt_widgets import InfoIcon, TitledFrame, flow_row
+from qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, flow_row
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
@@ -171,7 +171,6 @@ class DuplicateFinderApp(QWidget):
         self._worker: ScanWorker | None = None
 
         self._build_ui()
-        self._update_source_frame_width()
         self._update_undo_button()
         self._load_default_folder_if_set()
 
@@ -189,8 +188,13 @@ class DuplicateFinderApp(QWidget):
         scroll.setWidget(body_widget)
         outer.addWidget(scroll, 1)
 
-        self._build_source_section(body)
-        self._build_result_section(body)
+        # Quelle links, Ergebnis rechts - per Maus verschiebbarer Trenner
+        # (ResizableSplitFrame), der bei schmalem Fenster automatisch auf
+        # untereinander umschaltet (siehe qt_widgets.py).
+        split = ResizableSplitFrame(min_width_left=280, min_width_right=420, left_stretch=1, right_stretch=2)
+        body.addWidget(split, 1)
+        self._build_source_section(split.left.layout())
+        self._build_result_section(split.right.layout())
 
         hint = QLabel(
             "Tipp: Häkchen markiert eine Datei zum Verschieben - je Gruppe ist die älteste "
@@ -213,24 +217,9 @@ class DuplicateFinderApp(QWidget):
         self.undo_button.clicked.connect(self.undo_last)
         bottom.layout().addWidget(self.undo_button)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_source_frame_width()
-
-    def _update_source_frame_width(self) -> None:
-        """Begrenzt den Quellordner-Bereich auf ein Drittel der aktuellen
-        Fensterbreite (mit sinnvoller Mindestbreite, damit Drop-Zone/Buttons
-        bei schmalem Fenster nicht zu sehr gequetscht werden) - der Rest der
-        Zeile bleibt leer, statt die Box über die volle Breite zu strecken."""
-        min_width = 260
-        self.source_frame.setMaximumWidth(max(min_width, self.width() // 3))
-
-    def _build_source_section(self, body: QVBoxLayout) -> None:
-        # Auf ein Drittel der Fensterbreite begrenzt (siehe resizeEvent) -
-        # bleibt dabei oben/links stehen statt über die volle Fensterbreite
-        # gestreckt zu werden.
+    def _build_source_section(self, column: QVBoxLayout) -> None:
         self.source_frame = TitledFrame("Quellordner")
-        body.addWidget(self.source_frame)
+        column.addWidget(self.source_frame)
 
         drop_row = QWidget()
         drop_row_layout = QHBoxLayout(drop_row)
@@ -301,10 +290,10 @@ class DuplicateFinderApp(QWidget):
         scan_row.layout().addWidget(self.status_label)
         self.source_frame.body_layout.addWidget(scan_row)
 
-    def _build_result_section(self, body: QVBoxLayout) -> None:
+    def _build_result_section(self, column: QVBoxLayout) -> None:
         result_frame = TitledFrame("Ergebnis")
         result_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        body.addWidget(result_frame, 1)
+        column.addWidget(result_frame, 1)
 
         self.summary_label = QLabel("Noch nicht gescannt.")
         result_frame.body_layout.addWidget(self.summary_label)

@@ -18,6 +18,14 @@ Ideen für spätere Erweiterungen, nicht in der aktuellen Version enthalten:
 - **Mehrere Standardordner**: aktuell lässt sich nur ein einzelner Ordner
   als fester Standard speichern (wie beim Datei-Umbenenner) - später
   evtl. eine Liste mehrerer fester Quellen.
+- **Sprachumschaltung Deutsch/Englisch**: alle Texte (Buttons, Tooltips,
+  Hilfetexte, Meldungen) auch auf Englisch, mit Umschalter für den Nutzer.
+  Technisch gut machbar, aber aufwändig, da aktuell jeder Text fest im Code
+  steht - am ehesten über ein einfaches eigenes Wörterbuch (`translations.py`
+  mit `t("schlüssel")`-Funktion statt Qt-eigener `.ts`/`.qm`-Infrastruktur,
+  die zusätzliches Werkzeug bräuchte). Sprachwechsel würde vermutlich erst
+  nach Neustart greifen (wie der Standardordner gespeichert), da alle Texte
+  live neu zu setzen deutlich aufwändiger wäre.
 - **Terminal-freier Start ohne grauen Icon-Rand**: ein Versuch mit einem
   von Hand gebauten `.app`-Bundle (Info.plist + Launcher-Skript) zeigte
   bei mehreren Icon-Varianten und selbst nach Ad-hoc-Signierung weiterhin

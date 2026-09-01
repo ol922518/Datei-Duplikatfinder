@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QUrl, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -181,6 +181,7 @@ class DuplicateFinderApp(QWidget):
         self._worker: ScanWorker | None = None
 
         self._build_ui()
+        self._update_source_frame_width()
         self._update_undo_button()
         self._load_default_folder_if_set()
 
@@ -222,9 +223,24 @@ class DuplicateFinderApp(QWidget):
         self.undo_button.clicked.connect(self.undo_last)
         bottom.layout().addWidget(self.undo_button)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_source_frame_width()
+
+    def _update_source_frame_width(self) -> None:
+        """Begrenzt den Quellordner-Bereich auf ein Drittel der aktuellen
+        Fensterbreite (mit sinnvoller Mindestbreite, damit Drop-Zone/Buttons
+        bei schmalem Fenster nicht zu sehr gequetscht werden) - der Rest der
+        Zeile bleibt leer, statt die Box über die volle Breite zu strecken."""
+        min_width = 260
+        self.source_frame.setMaximumWidth(max(min_width, self.width() // 3))
+
     def _build_source_section(self, body: QVBoxLayout) -> None:
-        source_frame = TitledFrame("Quellordner")
-        body.addWidget(source_frame)
+        # Auf ein Drittel der Fensterbreite begrenzt (siehe resizeEvent) -
+        # bleibt dabei oben/links stehen statt über die volle Fensterbreite
+        # gestreckt zu werden.
+        self.source_frame = TitledFrame("Quellordner")
+        body.addWidget(self.source_frame)
 
         drop_row = QWidget()
         drop_row_layout = QHBoxLayout(drop_row)
@@ -255,11 +271,11 @@ class DuplicateFinderApp(QWidget):
         button_stack.addWidget(clear_default_btn)
         button_stack.addStretch(1)
         drop_row_layout.addLayout(button_stack)
-        source_frame.body_layout.addWidget(drop_row)
+        self.source_frame.body_layout.addWidget(drop_row)
 
         self.default_folder_label = QLabel("Kein Standardordner festgelegt")
         self.default_folder_label.setWordWrap(True)
-        source_frame.body_layout.addWidget(self.default_folder_label)
+        self.source_frame.body_layout.addWidget(self.default_folder_label)
         self._refresh_default_folder_label()
 
         options_row = _flow(None)
@@ -269,7 +285,7 @@ class DuplicateFinderApp(QWidget):
         options_row.layout().addWidget(self.recursive_check)
         options_row.layout().addWidget(InfoIcon(RECURSIVE_HELP))
         options_row.layout().addWidget(InfoIcon(COMPARE_HELP, title="Vergleichskriterium"))
-        source_frame.body_layout.addWidget(options_row)
+        self.source_frame.body_layout.addWidget(options_row)
 
         similar_row = _flow(None)
         self.similar_check = QCheckBox("🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)")
@@ -281,7 +297,7 @@ class DuplicateFinderApp(QWidget):
             missing_label = QLabel("(Paket 'Pillow' fehlt - siehe requirements.txt)")
             missing_label.setStyleSheet("color: palette(mid);")
             similar_row.layout().addWidget(missing_label)
-        source_frame.body_layout.addWidget(similar_row)
+        self.source_frame.body_layout.addWidget(similar_row)
 
         scan_row = _flow(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
@@ -293,7 +309,7 @@ class DuplicateFinderApp(QWidget):
         scan_row.layout().addWidget(self.progress_bar)
         self.status_label = QLabel("")
         scan_row.layout().addWidget(self.status_label)
-        source_frame.body_layout.addWidget(scan_row)
+        self.source_frame.body_layout.addWidget(scan_row)
 
     def _build_result_section(self, body: QVBoxLayout) -> None:
         result_frame = TitledFrame("Ergebnis")
@@ -612,8 +628,55 @@ def _format_mtime(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp).strftime("%d.%m.%Y %H:%M")
 
 
+def _system_is_dark(app: QApplication) -> bool:
+    """Erkennt, ob das System (z.B. macOS) gerade im Dark Mode ist - wichtig,
+    weil app.setStyle("Fusion") unten sonst immer seine eigene, feste helle
+    Palette mitbringt und dem System-Erscheinungsbild nicht folgt (Ergebnis:
+    z.T. dunkle, kaum lesbare Schrift auf dunklem Hintergrund)."""
+    try:
+        if app.styleHints().colorScheme() == Qt.ColorScheme.Dark:
+            return True
+        if app.styleHints().colorScheme() == Qt.ColorScheme.Light:
+            return False
+    except AttributeError:
+        pass  # ältere Qt-Version ohne styleHints().colorScheme()
+    # Fallback: Standard-Fensterfarbe auswerten, bevor Fusion sie überschreibt.
+    return app.palette().color(QPalette.Window).lightness() < 128
+
+
+def _dark_fusion_palette() -> QPalette:
+    """Verbreitetes 'Dark Fusion'-Palettenrezept (identisch zum
+    Datei-Umbenenner), damit alle Fusion-Widgets (Buttons, Labels, Tabellen/
+    Baum, Eingabefelder, Gruppenrahmen, ...) im Dark Mode durchgängig helle
+    statt dunkler Schrift auf dunklem Hintergrund zeigen - inklusive aller
+    Stellen in dieser App, die per Stylesheet auf palette(...)-Rollen
+    verweisen (z.B. DropZone, Ergebnis-Baum)."""
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(53, 53, 53))
+    palette.setColor(QPalette.WindowText, QColor(220, 220, 220))
+    palette.setColor(QPalette.Base, QColor(35, 35, 35))
+    palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    palette.setColor(QPalette.ToolTipBase, QColor(220, 220, 220))
+    palette.setColor(QPalette.ToolTipText, QColor(35, 35, 35))
+    palette.setColor(QPalette.Text, QColor(220, 220, 220))
+    palette.setColor(QPalette.Button, QColor(53, 53, 53))
+    palette.setColor(QPalette.ButtonText, QColor(220, 220, 220))
+    palette.setColor(QPalette.BrightText, QColor(255, 60, 60))
+    palette.setColor(QPalette.Link, QColor(90, 160, 255))
+    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(127, 127, 127))
+    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(127, 127, 127))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(127, 127, 127))
+    return palette
+
+
 def main():
     app = QApplication([])
+    is_dark = _system_is_dark(app)
+    app.setStyle("Fusion")
+    if is_dark:
+        app.setPalette(_dark_fusion_palette())
     window = DuplicateFinderApp()
     window.show()
     app.exec()

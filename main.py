@@ -665,6 +665,15 @@ def _dark_fusion_palette() -> QPalette:
     palette.setColor(QPalette.Link, QColor(90, 160, 255))
     palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
     palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    # Ohne diese vier Rollen bleiben sie auf dem undefinierten, viel zu
+    # dunklen Standardwert der QPalette-Basisklasse stehen (sichtbar z.B. am
+    # "Tipp:"-Hinweistext unter dem Ergebnisbereich, der "color: palette(mid)"
+    # per Stylesheet nutzt - dort stand vorher kaum lesbarer dunkler Text auf
+    # dunklem Hintergrund).
+    palette.setColor(QPalette.Mid, QColor(150, 150, 150))
+    palette.setColor(QPalette.Midlight, QColor(80, 80, 80))
+    palette.setColor(QPalette.Dark, QColor(20, 20, 20))
+    palette.setColor(QPalette.Light, QColor(90, 90, 90))
     palette.setColor(QPalette.Disabled, QPalette.Text, QColor(127, 127, 127))
     palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(127, 127, 127))
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(127, 127, 127))

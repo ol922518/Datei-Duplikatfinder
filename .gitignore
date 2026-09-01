@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# macOS
+.DS_Store
+
+# Laufzeit-/Nutzerdaten der App (keine Quelldateien, ändern sich bei jeder
+# Nutzung und enthalten teils lokale Pfade) - bewusst nicht versioniert.
+app_settings.json
+.last_move_log.json

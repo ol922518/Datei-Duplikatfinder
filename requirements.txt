@@ -1,0 +1,6 @@
+# Erforderlich für die Oberfläche (PySide6/Qt) - bringt auch natives
+# Drag & Drop mit (kein Zusatzpaket mehr nötig).
+PySide6>=6.7.0
+
+# Für den Duplikat-Vergleich selbst (Hashing über die Python-Standardbibliothek
+# hashlib) wird kein weiteres Paket benötigt.

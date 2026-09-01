@@ -2,6 +2,18 @@
 
 ## Für morgen (2026-09-02)
 
+- **App-Bundle: zweiter Start soll bestehendes Fenster hervorholen statt
+  nichts zu tun.** Aktuell: läuft die App bereits und man doppelklickt
+  erneut auf die `.app`, hüpft das Dock-Icon kurz, ohne dass etwas
+  passiert (kein neues Fenster, bestehendes wird nicht in den
+  Vordergrund geholt). Lösung: `<key>LSMultipleInstancesProhibited</key>
+  <true/>` in `Datei-Duplikatfinder.app/Contents/Info.plist` ergänzen -
+  ein macOS-Bordmittel, das LaunchServices genau dafür anweist, keinen
+  zweiten Prozess zu starten, sondern stattdessen die laufende Instanz zu
+  aktivieren/nach vorne zu holen. Kein eigener IPC-Code nötig. Setzt
+  voraus, dass das App-Bundle wieder existiert (siehe Punkt zum
+  Terminal-freien Start unten, aktuell zurückgestellt) - beide Punkte
+  hängen also zusammen und sollten zusammen angegangen werden.
 - **Bug: Häkchen im Ergebnisbereich unsichtbar.** Die An-/Abwähl-Häkchen
   in der ersten Spalte der Ergebnis-Tabelle werden aktuell nicht
   dargestellt (evtl. eine Nebenwirkung von `app.setStyle("Fusion")` +

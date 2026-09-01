@@ -10,3 +10,4 @@ venv/
 # Nutzung und enthalten teils lokale Pfade) - bewusst nicht versioniert.
 app_settings.json
 .last_move_log.json
+.app_launch.log

@@ -49,6 +49,13 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    (Perceptual Hashing statt exaktem Vergleich, siehe nächster Abschnitt).
    Braucht das Paket `Pillow` – fehlt es, bleibt die Option wirkungslos
    (Hinweis daneben).
+   **Zielordner** – standardmäßig landet jede verschobene Datei im
+   `Duplikate`-Unterordner ihrer jeweiligen Quelle; über „Ändern…“ lässt
+   sich stattdessen ein einziger, zentraler Zielordner für alle
+   verschobenen Duplikate festlegen (gespeichert in `app_settings.json`,
+   bleibt über einen Neustart hinweg erhalten), „↺ Standard“ setzt das
+   wieder zurück. Liegt der zentrale Zielordner innerhalb einer der
+   Quellen, wird er beim Scannen automatisch übersprungen.
 3. **„🔍 Auf Duplikate prüfen“** – durchsucht die Quelle(n) in einem
    Hintergrund-Thread (die Oberfläche bleibt währenddessen bedienbar) und
    zeigt den Fortschritt an.
@@ -64,10 +71,12 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    **„↺ Auswahl zurücksetzen“** stellt die ursprüngliche Vorauswahl wieder
    her.
 5. **„🗂 Ausgewählte in 'Duplikate'-Ordner verschieben“** – verschiebt alle
-   angehakten Dateien in einen Unterordner `Duplikate` der jeweiligen
-   Quelle (die Ordnerstruktur darunter bleibt erhalten). Nichts wird
-   gelöscht. **„↺ Verschieben rückgängig machen“** macht die zuletzt
-   durchgeführte Aktion wieder vollständig rückgängig.
+   angehakten Dateien in den `Duplikate`-Unterordner ihrer jeweiligen
+   Quelle, oder - falls unter „Optionen“ festgelegt - gemeinsam in den
+   konfigurierten zentralen Zielordner (die Ordnerstruktur innerhalb der
+   Quelle bleibt jeweils erhalten). Nichts wird gelöscht. **„↺ Verschieben
+   rückgängig machen“** macht die zuletzt durchgeführte Aktion wieder
+   vollständig rückgängig.
 
 ## Vergleichskriterium
 

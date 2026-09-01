@@ -54,6 +54,16 @@ COMPARE_HELP = (
     "Datei per Häkchen anpassen."
 )
 
+TARGET_FOLDER_HELP = (
+    "Standardmäßig landet jede verschobene Datei im 'Duplikate'-Unterordner "
+    "ihrer jeweiligen Quelle (Ordnerstruktur bleibt dabei erhalten). Über "
+    "'Ändern…' lässt sich stattdessen ein einziger, zentraler Zielordner "
+    "festlegen, in den dann alle verschobenen Duplikate wandern - egal aus "
+    "welcher Quelle sie stammen. Die Einstellung wird gemerkt (auch über "
+    "einen Neustart hinweg) und gilt für alle künftigen 'Verschieben'-"
+    "Aktionen, bis sie über '↺ Standard' wieder zurückgesetzt wird."
+)
+
 SIMILAR_HELP = (
     "Findet zusätzlich Bilder, die sich zwar leicht unterscheiden (andere "
     "Auflösung, erneut komprimiert, minimal bearbeitet), aber ganz ähnlich "
@@ -124,15 +134,22 @@ class ScanWorker(QThread):
     finished_ok = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, sources: list[Path], recursive: bool, find_similar: bool, parent=None):
+    def __init__(self, sources: list[Path], recursive: bool, find_similar: bool,
+                 target_folder: Path | None, parent=None):
         super().__init__(parent)
         self._sources = sources
         self._recursive = recursive
         self._find_similar = find_similar
+        self._target_folder = target_folder
 
     def run(self):
         try:
-            files = engine.collect_files(self._sources, recursive=self._recursive)
+            # Ein gesetzter zentraler Zielordner wird vom Scan ausgeschlossen -
+            # sonst könnten dort bereits verschobene Duplikate bei einem
+            # erneuten Scan wieder als (weitere) Quelle mitgezählt werden,
+            # falls er innerhalb einer der Quellen liegt.
+            exclude = {self._target_folder} if self._target_folder is not None else None
+            files = engine.collect_files(self._sources, recursive=self._recursive, exclude_dirs=exclude)
             exact_groups = engine.find_exact_duplicates(
                 files,
                 progress_callback=lambda done, total, phase: self.progress.emit(done, total, phase),
@@ -297,6 +314,22 @@ class DuplicateFinderApp(QWidget):
             similar_row.layout().addWidget(missing_label)
         options_frame.body_layout.addWidget(similar_row)
 
+        target_row = flow_row(None)
+        self.target_folder_label = QLabel()
+        self.target_folder_label.setWordWrap(True)
+        target_row.layout().addWidget(self.target_folder_label)
+        choose_target_btn = QPushButton("Ändern…")
+        choose_target_btn.setToolTip("Legt einen zentralen Ordner fest, in den alle verschobenen Duplikate landen - egal aus welcher Quelle.")
+        choose_target_btn.clicked.connect(self._choose_target_folder)
+        target_row.layout().addWidget(choose_target_btn)
+        reset_target_btn = QPushButton("↺ Standard")
+        reset_target_btn.setToolTip("Zurück zum Standard: jede Datei landet im 'Duplikate'-Unterordner ihrer jeweiligen Quelle.")
+        reset_target_btn.clicked.connect(self._reset_target_folder)
+        target_row.layout().addWidget(reset_target_btn)
+        target_row.layout().addWidget(InfoIcon(TARGET_FOLDER_HELP, title="Zielordner"))
+        options_frame.body_layout.addWidget(target_row)
+        self._refresh_target_folder_label()
+
         scan_row = flow_row(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
         self.scan_button.clicked.connect(self.start_scan)
@@ -418,6 +451,35 @@ class DuplicateFinderApp(QWidget):
         settings["find_similar"] = checked
         engine.save_settings(settings)
 
+    def _target_folder(self) -> Path | None:
+        """Der aktuell konfigurierte zentrale Zielordner - None, wenn keiner
+        gesetzt ist (Standard: 'Duplikate'-Unterordner je Quelle)."""
+        folder = engine.load_settings().get("target_folder")
+        return Path(folder) if folder else None
+
+    def _choose_target_folder(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(self, "Zentralen Zielordner für Duplikate wählen")
+        if not chosen:
+            return
+        settings = engine.load_settings()
+        settings["target_folder"] = chosen
+        engine.save_settings(settings)
+        self._refresh_target_folder_label()
+
+    def _reset_target_folder(self) -> None:
+        settings = engine.load_settings()
+        if "target_folder" in settings:
+            del settings["target_folder"]
+            engine.save_settings(settings)
+        self._refresh_target_folder_label()
+
+    def _refresh_target_folder_label(self) -> None:
+        folder = self._target_folder()
+        if folder:
+            self.target_folder_label.setText(f"🗂 Zielordner: {folder}")
+        else:
+            self.target_folder_label.setText("🗂 Zielordner: 'Duplikate'-Unterordner je Quelle (Standard)")
+
     # ------------------------------------------------------------------
     # Scan
     # ------------------------------------------------------------------
@@ -442,7 +504,9 @@ class DuplicateFinderApp(QWidget):
         self.progress_bar.setRange(0, 0)  # unbestimmt, solange die Dateiliste noch nicht feststeht
         self.status_label.setText("Durchsuche Quelle(n) …")
 
-        self._worker = ScanWorker(list(self.sources), self.recursive_check.isChecked(), find_similar, self)
+        self._worker = ScanWorker(
+            list(self.sources), self.recursive_check.isChecked(), find_similar, self._target_folder(), self,
+        )
         self._worker.progress.connect(self._on_scan_progress)
         self._worker.finished_ok.connect(self._on_scan_finished)
         self._worker.failed.connect(self._on_scan_failed)
@@ -581,18 +645,19 @@ class DuplicateFinderApp(QWidget):
         paths = self._checked_paths()
         if not paths:
             return
+        target_folder = self._target_folder()
+        destination = f"'{target_folder}'" if target_folder else "den jeweiligen 'Duplikate'-Unterordner"
         total_size = sum(p.stat().st_size for p in paths if p.exists())
         reply = QMessageBox.question(
             self, "Duplikate verschieben",
-            f"{len(paths)} Datei(en) ({engine.format_size(total_size)}) in den jeweiligen "
-            "'Duplikate'-Unterordner verschieben?",
+            f"{len(paths)} Datei(en) ({engine.format_size(total_size)}) nach {destination} verschieben?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
         try:
-            performed = engine.move_to_duplicates_folder(paths, self.sources)
+            performed = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
         except OSError as exc:
             QMessageBox.warning(self, "Fehler beim Verschieben", str(exc))
             performed = []

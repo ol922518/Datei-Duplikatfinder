@@ -89,12 +89,25 @@ class DuplicateGroup:
 # Ordner einlesen
 # ---------------------------------------------------------------------------
 
-def list_files(folder: Path, recursive: bool, include_hidden: bool = False) -> list[Path]:
+def _is_within(path: Path, ancestor: Path) -> bool:
+    try:
+        path.relative_to(ancestor)
+        return True
+    except ValueError:
+        return False
+
+
+def list_files(folder: Path, recursive: bool, include_hidden: bool = False,
+                exclude_dirs: set[Path] | None = None) -> list[Path]:
     """Listet alle Dateien in `folder` - rekursiv über Unterordner, sofern
     gewünscht. Der App-eigene "Duplikate"-Ausgabeordner wird dabei immer
     übersprungen, damit bereits verschobene Duplikate nicht bei einem
-    erneuten Scan wieder als Quelle mitgezählt werden."""
+    erneuten Scan wieder als Quelle mitgezählt werden. `exclude_dirs`
+    überspringt zusätzlich alle Dateien unterhalb der angegebenen Ordner -
+    z.B. einen konfigurierten zentralen Zielordner mit abweichendem Namen
+    (siehe collect_files/move_to_duplicates_folder)."""
     pattern = "**/*" if recursive else "*"
+    exclude_dirs = exclude_dirs or set()
     files = []
     for p in sorted(folder.glob(pattern)):
         if not p.is_file():
@@ -102,6 +115,8 @@ def list_files(folder: Path, recursive: bool, include_hidden: bool = False) -> l
         if not include_hidden and p.name.startswith("."):
             continue
         if DUPLICATES_FOLDER_NAME in p.relative_to(folder).parts[:-1]:
+            continue
+        if any(_is_within(p, ex) for ex in exclude_dirs):
             continue
         files.append(p)
     return files
@@ -128,14 +143,16 @@ def _full_hash(path: Path) -> str:
 # Duplikat-Suche
 # ---------------------------------------------------------------------------
 
-def collect_files(sources: list[Path], recursive: bool = True) -> list[Path]:
+def collect_files(sources: list[Path], recursive: bool = True,
+                   exclude_dirs: set[Path] | None = None) -> list[Path]:
     """Löst die gegebenen Quellen (Ordner und/oder einzelne Dateien) zu einer
-    flachen, deduplizierten Liste von Dateipfaden auf."""
+    flachen, deduplizierten Liste von Dateipfaden auf. `exclude_dirs` siehe
+    list_files()."""
     all_files: list[Path] = []
     seen: set[Path] = set()
     for src in sources:
         if src.is_dir():
-            for f in list_files(src, recursive=recursive):
+            for f in list_files(src, recursive=recursive, exclude_dirs=exclude_dirs):
                 if f not in seen:
                     seen.add(f)
                     all_files.append(f)
@@ -372,12 +389,18 @@ def _unique_path(path: Path) -> Path:
         counter += 1
 
 
-def move_to_duplicates_folder(files: list[Path], roots: list[Path]) -> list[tuple[str, str]]:
-    """Verschiebt die gegebenen Dateien in einen 'Duplikate'-Unterordner der
-    jeweils zugehörigen Quelle, die relative Ordnerstruktur darunter bleibt
-    erhalten (z.B. landet 'Fotos/2020/bild.jpg' in
-    'Fotos/Duplikate/2020/bild.jpg'). Bei Namenskonflikten im Zielordner
-    wird automatisch ein Zähler angehängt.
+def move_to_duplicates_folder(files: list[Path], roots: list[Path],
+                               target_folder: Path | None = None) -> list[tuple[str, str]]:
+    """Verschiebt die gegebenen Dateien - die relative Ordnerstruktur
+    innerhalb ihrer jeweiligen Quelle bleibt dabei erhalten (z.B. landet
+    'Fotos/2020/bild.jpg' als 'Fotos/Duplikate/2020/bild.jpg' bzw. bei
+    gesetztem `target_folder` als '<target_folder>/2020/bild.jpg'). Bei
+    Namenskonflikten im Zielordner wird automatisch ein Zähler angehängt.
+
+    - `target_folder=None` (Standard): jede Datei landet im
+      'Duplikate'-Unterordner ihrer jeweiligen Quelle (siehe `roots`).
+    - `target_folder=<Pfad>`: alle Dateien landen gemeinsam dort, unabhängig
+      davon, aus welcher Quelle sie stammen.
 
     Schreibt zusätzlich ein Log (LOG_FILE) für undo_last_move() und gibt die
     Liste (alter Pfad, neuer Pfad) als Strings zurück.
@@ -386,7 +409,8 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path]) -> list[tupl
     for f in files:
         root = _find_root(f, roots)
         rel = f.relative_to(root)
-        target = root / DUPLICATES_FOLDER_NAME / rel
+        base = target_folder if target_folder is not None else (root / DUPLICATES_FOLDER_NAME)
+        target = base / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target = _unique_path(target)
         shutil.move(str(f), str(target))

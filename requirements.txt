@@ -5,7 +5,10 @@ PySide6>=6.7.0
 # Für den exakten Duplikat-Vergleich (Hashing über die Python-Standardbibliothek
 # hashlib) wird kein weiteres Paket benötigt.
 
-# Optional – nur für "Ähnliche Bilder erkennen" (Perceptual Hashing). Ohne
-# dieses Paket funktioniert die App trotzdem, diese eine Option ist dann nur
-# deaktiviert.
-Pillow>=10.0.0
+# Optional – ohne diese Pakete funktioniert die App trotzdem, nur die
+# jeweilige Funktion ist dann eingeschränkt:
+Pillow>=10.0.0      # "Ähnliche Bilder erkennen" (Perceptual Hashing) + Foto-Metadaten im Datei-Viewer
+python-docx>=1.1.0  # Word-Dateien (.docx) als Text im Datei-Viewer anzeigen
+
+# PDF- und Bild-Vorschau im Datei-Viewer brauchen kein weiteres Paket -
+# QtPdf/QtPdfWidgets sind bereits in PySide6 enthalten.

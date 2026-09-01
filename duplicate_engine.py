@@ -25,13 +25,21 @@ import hashlib
 import json
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 try:
-    from PIL import Image
+    from PIL import ExifTags, Image
+    from PIL.ExifTags import TAGS
     PILLOW_AVAILABLE = True
 except ImportError:
     PILLOW_AVAILABLE = False
+
+try:
+    import docx  # python-docx - fürs Anzeigen von .docx-Dateien im Datei-Viewer
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
 
 PARTIAL_HASH_BYTES = 64 * 1024  # 64 KB
 CHUNK_SIZE = 1024 * 1024  # 1 MB - Lesepuffer für den vollen Hash
@@ -40,6 +48,9 @@ DUPLICATES_FOLDER_NAME = "Duplikate"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
 PHASH_SIZE = 8  # 8x8 -> 64-Bit-Hash
 SIMILARITY_THRESHOLD = 10  # von 64 Bits verschieden - toleriert leichte Unterschiede
+
+# Für den Datei-Viewer (document_viewer.py) - identisch zum Datei-Umbenenner.
+TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml"}
 
 SETTINGS_FILE = Path(__file__).parent / "app_settings.json"
 LOG_FILE = Path(__file__).parent / ".last_move_log.json"
@@ -351,6 +362,118 @@ def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRES
 
     groups.sort(key=lambda g: g.wasted_bytes, reverse=True)
     return groups
+
+
+# ---------------------------------------------------------------------------
+# Datei-Viewer: Foto-Metadaten + Geocoding (identisch zum Datei-Umbenenner) -
+# wird von document_viewer.py genutzt, um bei echten Kamerafotos eine kleine
+# Metadaten-Zeile (Datum/Kamera/Ort) samt "🌐 Ort ermitteln"-Button anzuzeigen.
+# reverse_geocode() ist die EINZIGE Stelle in der ganzen App, die eine
+# Internetverbindung braucht (Abfrage bei OpenStreetMap/Nominatim) - wird nie
+# automatisch aufgerufen, sondern nur auf diesen Klick hin.
+# ---------------------------------------------------------------------------
+
+def _dms_to_decimal(dms, ref) -> float | None:
+    """Wandelt eine EXIF-GPS-Koordinate (Grad/Minuten/Sekunden) in eine
+    Dezimalzahl um - negativ bei Süd/West."""
+    try:
+        deg, minutes, seconds = (float(v) for v in dms)
+    except (TypeError, ValueError):
+        return None
+    value = deg + minutes / 60 + seconds / 3600
+    return -value if str(ref) in ("S", "W") else value
+
+
+def extract_photo_metadata(path: Path) -> dict:
+    """Liest gängige EXIF-Metadaten eines Fotos aus (Aufnahmedatum, GPS-
+    Koordinaten, Kamerahersteller/-modell) - nur bei echten Kamerabildern
+    vorhanden, komplett offline (keine Internetverbindung nötig). Fehlende
+    Felder fehlen im Ergebnis-dict.
+
+    Mögliche Schlüssel: "date" (Text "JJJJ-MM-TT"), "date_obj" (datetime),
+    "camera" (Text), "latitude"/"longitude" (float, Dezimalgrad)."""
+    result: dict = {}
+    if not PILLOW_AVAILABLE:
+        return result
+    try:
+        with Image.open(path) as img:
+            exif = img.getexif()
+            if not exif:
+                return result
+            tag_map = {TAGS.get(tag_id, tag_id): value for tag_id, value in exif.items()}
+
+            date_str = tag_map.get("DateTimeOriginal") or tag_map.get("DateTime")
+            if date_str:
+                try:
+                    dt = datetime.strptime(str(date_str), "%Y:%m:%d %H:%M:%S")
+                    result["date_obj"] = dt
+                    result["date"] = dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+            make = str(tag_map.get("Make", "")).strip()
+            model = str(tag_map.get("Model", "")).strip()
+            camera = model if model.startswith(make) else " ".join(p for p in (make, model) if p)
+            if camera:
+                result["camera"] = camera
+
+            try:
+                gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+            except Exception:
+                gps_ifd = None
+            if gps_ifd and 2 in gps_ifd and 4 in gps_ifd:
+                lat = _dms_to_decimal(gps_ifd[2], gps_ifd.get(1, "N"))
+                lon = _dms_to_decimal(gps_ifd[4], gps_ifd.get(3, "E"))
+                if lat is not None and lon is not None:
+                    result["latitude"] = lat
+                    result["longitude"] = lon
+    except Exception:
+        pass
+    return result
+
+
+LOCATION_CACHE: dict[tuple[float, float], dict] = {}
+
+
+def location_cache_key(lat: float, lon: float) -> tuple[float, float]:
+    return (round(lat, 4), round(lon, 4))
+
+
+def reverse_geocode(lat: float, lon: float, timeout: float = 6.0) -> dict | None:
+    """Fragt bei OpenStreetMap/Nominatim Ort und Land zu GPS-Koordinaten ab.
+    Gibt bei Erfolg {'ort': ..., 'land': ...} zurück - einzelne Werte können
+    leer bleiben, falls Nominatim für diese Koordinate keine Adressdaten
+    liefert (das ist dann trotzdem ein erfolgreiches Ergebnis und wird auch
+    so zwischengespeichert). Gibt None zurück, wenn die Abfrage selbst
+    fehlschlägt (z.B. kein Internet)."""
+    key = location_cache_key(lat, lon)
+    if key in LOCATION_CACHE:
+        return LOCATION_CACHE[key]
+    try:
+        import urllib.parse
+        import urllib.request
+
+        url = "https://nominatim.openstreetmap.org/reverse?" + urllib.parse.urlencode(
+            {"lat": lat, "lon": lon, "format": "jsonv2", "zoom": "10", "accept-language": "de"}
+        )
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "Datei-Duplikatfinder/1.0 (privates Hobby-Projekt)"}
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        address = data.get("address", {})
+        ort = (
+            address.get("city") or address.get("town") or address.get("village")
+            or address.get("municipality") or address.get("county") or ""
+        )
+        if not ort:
+            ort = (data.get("display_name") or "").split(",")[0]
+        land = address.get("country", "")
+    except Exception:
+        return None
+    result = {"ort": ort, "land": land}
+    LOCATION_CACHE[key] = result
+    return result
 
 
 # ---------------------------------------------------------------------------

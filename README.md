@@ -78,6 +78,15 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    rückgängig machen“** macht die zuletzt durchgeführte Aktion wieder
    vollständig rückgängig.
 
+Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
+(identisch zum Datei-Umbenenner, siehe dort für Details) die zur
+ausgewählten Zeile gehörende Datei an - PDF, Bilder (inkl. Zoom),
+Text/Markdown/CSV/JSON/YAML und Word (`.docx`, sofern `python-docx`
+installiert ist). Bei echten Kamerafotos mit GPS-Daten erscheint zusätzlich
+eine Metadaten-Zeile mit einem Button „🌐 Ort ermitteln“ - das ist die
+einzige Stelle in der App, die (nur auf diesen Klick hin) eine
+Internetverbindung braucht.
+
 ## Vergleichskriterium
 
 Zwei Dateien gelten als Duplikat, wenn sie **exakt denselben Inhalt**
@@ -107,3 +116,4 @@ erkannt wurden, werden hierfür verglichen (keine doppelten Gruppen).
 - `main.py` – Oberfläche (PySide6)
 - `duplicate_engine.py` – Scan-/Hash-/Verschiebe-Logik, unabhängig von der Oberfläche
 - `qt_widgets.py` – wiederverwendbare UI-Bausteine (identisch zum Datei-Umbenenner)
+- `document_viewer.py` – Datei-Viewer (identisch zum Datei-Umbenenner)

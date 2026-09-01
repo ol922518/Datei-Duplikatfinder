@@ -37,7 +37,8 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
-from qt_widgets import InfoIcon, TitledFrame, TwoColumnFrame, flow_row
+from document_viewer import DocumentViewer
+from qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, TwoColumnFrame, flow_row
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
@@ -219,8 +220,9 @@ class DuplicateFinderApp(QWidget):
 
         hint = QLabel(
             "Tipp: Häkchen markiert eine Datei zum Verschieben - je Gruppe ist die älteste "
-            "Datei standardmäßig abgewählt (Original). Verschobene Dateien landen im "
-            "Unterordner 'Duplikate' der jeweiligen Quelle und lassen sich per "
+            "Datei standardmäßig abgewählt (Original). Zeile auswählen zeigt die Datei in der "
+            "Vorschau rechts. Verschobene Dateien landen im Unterordner 'Duplikate' der "
+            "jeweiligen Quelle (oder im festgelegten Zielordner) und lassen sich per "
             "'Verschieben rückgängig machen' wiederherstellen."
         )
         hint.setWordWrap(True)
@@ -364,6 +366,12 @@ class DuplicateFinderApp(QWidget):
         check_row.layout().addWidget(reset_selection_btn)
         result_frame.body_layout.addWidget(check_row)
 
+        # Baumansicht links, Datei-Viewer rechts - per Maus verschiebbarer
+        # Trenner (ResizableSplitFrame, wie beim Datei-Umbenenner), der bei
+        # schmalem Fenster automatisch auf untereinander umschaltet.
+        result_split = ResizableSplitFrame(min_width_left=260, min_width_right=380, left_stretch=1, right_stretch=2)
+        result_frame.body_layout.addWidget(result_split, 1)
+
         self.tree = QTreeWidget()
         self.tree.setColumnCount(5)
         self.tree.setHeaderLabels(["", "Datei", "Ordner", "Größe", "Geändert am"])
@@ -377,7 +385,12 @@ class DuplicateFinderApp(QWidget):
         self.tree.setColumnWidth(COL_NAME, 220)
         self.tree.setMinimumHeight(260)
         self.tree.itemChanged.connect(self._on_item_changed)
-        result_frame.body_layout.addWidget(self.tree)
+        self.tree.currentItemChanged.connect(self._on_current_item_changed)
+        result_split.left.layout().addWidget(self.tree)
+
+        self.viewer = DocumentViewer()
+        self.viewer.setMinimumWidth(220)
+        result_split.right.layout().addWidget(self.viewer)
 
     # ------------------------------------------------------------------
     # Quellordner
@@ -560,6 +573,7 @@ class DuplicateFinderApp(QWidget):
     def _rebuild_tree(self) -> None:
         self.tree.blockSignals(True)
         self.tree.clear()
+        self.viewer.clear()
 
         exact_i = 0
         similar_i = 0
@@ -611,6 +625,19 @@ class DuplicateFinderApp(QWidget):
     def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if column == COL_CHECK:
             self._update_move_button()
+
+    def _on_current_item_changed(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
+        """Zeigt die zur aktuell ausgewählten Zeile gehörende Datei im
+        Viewer-Panel an (siehe DocumentViewer) - Gruppenzeilen selbst haben
+        keinen Dateipfad und leeren den Viewer stattdessen."""
+        if current is None:
+            self.viewer.clear()
+            return
+        path_str = current.data(COL_CHECK, Qt.UserRole)
+        if not path_str:
+            self.viewer.clear()
+            return
+        self.viewer.show_file(Path(path_str))
 
     def _iter_child_items(self):
         for i in range(self.tree.topLevelItemCount()):

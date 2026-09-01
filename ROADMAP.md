@@ -10,8 +10,6 @@ Ideen für spätere Erweiterungen, nicht in der aktuellen Version enthalten:
   „Duplikate“-Ordner.
 - **Ausschlussmuster**: bestimmte Dateitypen/Ordnernamen (z.B.
   `node_modules`, `.git`) von der Suche ausschließen können.
-- **Datei-Vorschau**: kleiner eingebauter Viewer wie im Datei-Umbenenner,
-  um Duplikate vor dem Verschieben anzusehen (v.a. bei Bildern hilfreich).
 - **Mehrere Standardordner**: aktuell lässt sich nur ein einzelner Ordner
   als fester Standard speichern (wie beim Datei-Umbenenner) - später
   evtl. eine Liste mehrerer fester Quellen.

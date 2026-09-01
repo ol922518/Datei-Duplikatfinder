@@ -7,6 +7,9 @@ Wiederverwendbare UI-Bausteine für main.py, aufbauend auf PySide6/Qt:
   automatisch umbricht, wenn das Fenster schmaler wird (Qt-Standardrezept,
   hier leicht angepasst) - entspricht dem, was in der CustomTkinter-Version
   "ReflowFrame" hieß.
+- flow_row(): Hilfsfunktion, die ein Widget mit FlowLayout erzeugt (und
+  optional direkt an ein übergeordnetes Layout hängt) - der übliche Weg,
+  eine umbrechende Buttonzeile aufzubauen.
 - TitledFrame: eine Box mit Rahmen und Titel oben links (Qt bringt das mit
   QGroupBox nativ mit).
 - TwoColumnFrame: zwei nebeneinander angeordnete Spalten, die bei zu
@@ -131,6 +134,17 @@ class FlowLayout(QLayout):
             line_height = max(line_height, hint.height())
 
         return y + line_height - rect.y() + margins.bottom()
+
+
+def flow_row(parent_layout=None) -> QWidget:
+    """Erzeugt ein Widget mit FlowLayout (umbrechende Zeile), hängt es
+    optional direkt an ein übergeordnetes Layout und gibt es zurück - Kinder
+    werden dann per `row.layout().addWidget(...)` hinzugefügt."""
+    row = QWidget()
+    row.setLayout(FlowLayout())
+    if parent_layout is not None:
+        parent_layout.addWidget(row)
+    return row
 
 
 class TitledFrame(QGroupBox):

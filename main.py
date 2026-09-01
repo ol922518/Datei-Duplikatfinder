@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
-from qt_widgets import FlowLayout, InfoIcon, TitledFrame
+from qt_widgets import InfoIcon, TitledFrame, flow_row
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
@@ -66,16 +66,6 @@ SIMILAR_HELP = (
 )
 
 COL_CHECK, COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED = range(5)
-
-
-def _flow(parent_layout=None) -> QWidget:
-    """Erzeugt ein Widget mit FlowLayout (umbrechende Zeile), hängt es
-    optional direkt an ein übergeordnetes Layout und gibt es zurück."""
-    row = QWidget()
-    row.setLayout(FlowLayout())
-    if parent_layout is not None:
-        parent_layout.addWidget(row)
-    return row
 
 
 class DropZone(QFrame):
@@ -212,7 +202,7 @@ class DuplicateFinderApp(QWidget):
         hint.setStyleSheet("color: palette(mid);")
         body.addWidget(hint)
 
-        bottom = _flow(outer)
+        bottom = flow_row(outer)
         self.move_button = QPushButton("🗂 Ausgewählte in 'Duplikate'-Ordner verschieben")
         self.move_button.setEnabled(False)
         self.move_button.setToolTip("Verschiebt alle angehakten Dateien in einen 'Duplikate'-Unterordner ihrer jeweiligen Quelle.")
@@ -278,7 +268,7 @@ class DuplicateFinderApp(QWidget):
         self.source_frame.body_layout.addWidget(self.default_folder_label)
         self._refresh_default_folder_label()
 
-        options_row = _flow(None)
+        options_row = flow_row(None)
         self.recursive_check = QCheckBox("Unterordner einbeziehen (rekursiv)")
         self.recursive_check.setChecked(engine.load_settings().get("recursive", True))
         self.recursive_check.toggled.connect(self._on_recursive_toggled)
@@ -287,7 +277,7 @@ class DuplicateFinderApp(QWidget):
         options_row.layout().addWidget(InfoIcon(COMPARE_HELP, title="Vergleichskriterium"))
         self.source_frame.body_layout.addWidget(options_row)
 
-        similar_row = _flow(None)
+        similar_row = flow_row(None)
         self.similar_check = QCheckBox("🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)")
         self.similar_check.setChecked(engine.load_settings().get("find_similar", False))
         self.similar_check.toggled.connect(self._on_similar_toggled)
@@ -299,7 +289,7 @@ class DuplicateFinderApp(QWidget):
             similar_row.layout().addWidget(missing_label)
         self.source_frame.body_layout.addWidget(similar_row)
 
-        scan_row = _flow(None)
+        scan_row = flow_row(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
         self.scan_button.clicked.connect(self.start_scan)
         scan_row.layout().addWidget(self.scan_button)
@@ -319,7 +309,7 @@ class DuplicateFinderApp(QWidget):
         self.summary_label = QLabel("Noch nicht gescannt.")
         result_frame.body_layout.addWidget(self.summary_label)
 
-        check_row = _flow(None)
+        check_row = flow_row(None)
         select_all_btn = QPushButton("☑ Alle auswählen")
         select_all_btn.setToolTip("Hakt alle gefundenen Duplikate an - sie werden dann beim Verschieben berücksichtigt.")
         select_all_btn.clicked.connect(lambda: self._set_all_checked(True))

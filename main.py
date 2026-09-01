@@ -54,6 +54,17 @@ COMPARE_HELP = (
     "Datei per Häkchen anpassen."
 )
 
+SIMILAR_HELP = (
+    "Findet zusätzlich Bilder, die sich zwar leicht unterscheiden (andere "
+    "Auflösung, erneut komprimiert, minimal bearbeitet), aber ganz ähnlich "
+    "aussehen - über einen Bildvergleich (Perceptual Hashing), nicht über "
+    "exakte Prüfsummen. Kann daher auch mal Bilder als 'ähnlich' einstufen, "
+    "die bei genauerem Hinsehen doch unterschiedlich sind - vor dem "
+    "Verschieben bitte prüfen. Innerhalb jeder Gruppe gilt die größte Datei "
+    "als Vorschlag (vermutlich beste Qualität). Braucht das Paket 'Pillow' "
+    "(siehe requirements.txt) - ohne das Paket bleibt die Option wirkungslos."
+)
+
 COL_CHECK, COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED = range(5)
 
 
@@ -111,27 +122,45 @@ class DropZone(QFrame):
 
 
 class ScanWorker(QThread):
-    """Führt scan_for_duplicates() in einem Hintergrund-Thread aus, damit die
-    Oberfläche bei großen Ordnern nicht einfriert. progress meldet den
-    Fortschritt (siehe duplicate_engine.scan_for_duplicates), finished liefert
-    die fertigen Gruppen."""
+    """Führt die Duplikat-Suche in einem Hintergrund-Thread aus, damit die
+    Oberfläche bei großen Ordnern nicht einfriert. Erst exakte Duplikate
+    (siehe duplicate_engine.find_exact_duplicates), optional anschließend
+    ähnliche Bilder unter den übrig gebliebenen Dateien (siehe
+    duplicate_engine.scan_for_similar_images) - so entstehen keine
+    doppelten Gruppen für bereits exakt erkannte Dateien. progress meldet
+    den Fortschritt, finished_ok liefert die fertigen Gruppen (exakte zuerst)."""
 
     progress = Signal(int, int, str)
     finished_ok = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, sources: list[Path], recursive: bool, parent=None):
+    def __init__(self, sources: list[Path], recursive: bool, find_similar: bool, parent=None):
         super().__init__(parent)
         self._sources = sources
         self._recursive = recursive
+        self._find_similar = find_similar
 
     def run(self):
         try:
-            groups = engine.scan_for_duplicates(
-                self._sources,
-                recursive=self._recursive,
+            files = engine.collect_files(self._sources, recursive=self._recursive)
+            exact_groups = engine.find_exact_duplicates(
+                files,
                 progress_callback=lambda done, total, phase: self.progress.emit(done, total, phase),
             )
+            groups = list(exact_groups)
+            if self._find_similar and engine.PILLOW_AVAILABLE:
+                # Nur die "zu verschiebenden" Dateien einer exakten Gruppe
+                # ausschließen (Index 0 = Original bleibt teilnahmeberechtigt) -
+                # sonst würde z.B. eine verkleinerte/neu komprimierte Kopie
+                # keinen Vergleichspartner mehr finden, nur weil ihr exaktes
+                # Gegenstück bereits (unter anderem Namen) exakt gruppiert wurde.
+                already_grouped = {entry.path for g in exact_groups for entry in g.files[1:]}
+                remaining = [f for f in files if f not in already_grouped]
+                similar_groups = engine.scan_for_similar_images(
+                    remaining,
+                    progress_callback=lambda done, total, phase: self.progress.emit(done, total, phase),
+                )
+                groups += similar_groups
         except OSError as exc:
             self.failed.emit(str(exc))
             return
@@ -241,6 +270,18 @@ class DuplicateFinderApp(QWidget):
         options_row.layout().addWidget(InfoIcon(RECURSIVE_HELP))
         options_row.layout().addWidget(InfoIcon(COMPARE_HELP, title="Vergleichskriterium"))
         source_frame.body_layout.addWidget(options_row)
+
+        similar_row = _flow(None)
+        self.similar_check = QCheckBox("🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)")
+        self.similar_check.setChecked(engine.load_settings().get("find_similar", False))
+        self.similar_check.toggled.connect(self._on_similar_toggled)
+        similar_row.layout().addWidget(self.similar_check)
+        similar_row.layout().addWidget(InfoIcon(SIMILAR_HELP, title="Ähnliche Bilder"))
+        if not engine.PILLOW_AVAILABLE:
+            missing_label = QLabel("(Paket 'Pillow' fehlt - siehe requirements.txt)")
+            missing_label.setStyleSheet("color: palette(mid);")
+            similar_row.layout().addWidget(missing_label)
+        source_frame.body_layout.addWidget(similar_row)
 
         scan_row = _flow(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
@@ -358,6 +399,11 @@ class DuplicateFinderApp(QWidget):
         settings["recursive"] = checked
         engine.save_settings(settings)
 
+    def _on_similar_toggled(self, checked: bool) -> None:
+        settings = engine.load_settings()
+        settings["find_similar"] = checked
+        engine.save_settings(settings)
+
     # ------------------------------------------------------------------
     # Scan
     # ------------------------------------------------------------------
@@ -368,19 +414,29 @@ class DuplicateFinderApp(QWidget):
         if self._worker is not None:
             return
 
+        find_similar = self.similar_check.isChecked()
+        if find_similar and not engine.PILLOW_AVAILABLE:
+            QMessageBox.warning(
+                self, "Paket fehlt",
+                "Für 'Ähnliche Bilder erkennen' fehlt das Python-Paket 'Pillow' "
+                "(siehe requirements.txt). Der Scan läuft ohne diese Option weiter.",
+            )
+            find_similar = False
+
         self.scan_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # unbestimmt, solange die Dateiliste noch nicht feststeht
         self.status_label.setText("Durchsuche Quelle(n) …")
 
-        self._worker = ScanWorker(list(self.sources), self.recursive_check.isChecked(), self)
+        self._worker = ScanWorker(list(self.sources), self.recursive_check.isChecked(), find_similar, self)
         self._worker.progress.connect(self._on_scan_progress)
         self._worker.finished_ok.connect(self._on_scan_finished)
         self._worker.failed.connect(self._on_scan_failed)
         self._worker.start()
 
     def _on_scan_progress(self, done: int, total: int, phase: str) -> None:
-        label = "Teil-Prüfsummen" if phase == "partial" else "Volle Prüfsummen"
+        labels = {"partial": "Teil-Prüfsummen", "full": "Volle Prüfsummen", "phash": "Bildvergleich"}
+        label = labels.get(phase, phase)
         if total > 0:
             self.progress_bar.setRange(0, total)
             self.progress_bar.setValue(done)
@@ -400,8 +456,11 @@ class DuplicateFinderApp(QWidget):
         else:
             total_files = sum(len(g.files) for g in groups)
             wasted = sum(g.wasted_bytes for g in groups)
+            n_similar = sum(1 for g in groups if g.kind == "similar")
+            n_exact = len(groups) - n_similar
+            breakdown = f"{n_exact} exakt" + (f", {n_similar} ähnlich" if n_similar else "")
             self.status_label.setText(
-                f"Fertig - {len(groups)} Gruppe(n), {total_files} Datei(en), "
+                f"Fertig - {len(groups)} Gruppe(n) ({breakdown}), {total_files} Datei(en), "
                 f"{engine.format_size(wasted)} einsparbar."
             )
 
@@ -424,11 +483,25 @@ class DuplicateFinderApp(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
 
-        for i, group in enumerate(self.groups, start=1):
-            group_item = QTreeWidgetItem([
-                f"Gruppe {i} — {len(group.files)} Dateien — {engine.format_size(group.wasted_bytes)} einsparbar",
-                "", "", "", "",
-            ])
+        exact_i = 0
+        similar_i = 0
+        for group in self.groups:
+            if group.kind == "similar":
+                similar_i += 1
+                label = (
+                    f"🖼️ Ähnliche Bilder {similar_i} — {len(group.files)} Dateien"
+                    + (f" — ~{group.similarity * 100:.0f}% ähnlich" if group.similarity is not None else "")
+                    + f" — {engine.format_size(group.wasted_bytes)} einsparbar"
+                )
+                original_tooltip = "Wird als beste Qualität vorgeschlagen (größte Datei der Gruppe) - abwählbar/anders wählbar."
+                original_badge = "  🖼️ Beste Qualität"
+            else:
+                exact_i += 1
+                label = f"Gruppe {exact_i} — {len(group.files)} Dateien — {engine.format_size(group.wasted_bytes)} einsparbar"
+                original_tooltip = "Wird als Original vorgeschlagen (älteste Datei der Gruppe) - abwählbar/anders wählbar."
+                original_badge = "  🟢 Original"
+
+            group_item = QTreeWidgetItem([label, "", "", "", ""])
             bold = QFont()
             bold.setBold(True)
             group_item.setFont(0, bold)
@@ -437,10 +510,10 @@ class DuplicateFinderApp(QWidget):
             group_item.setFirstColumnSpanned(True)
 
             for idx, entry in enumerate(group.files):
-                is_original = idx == 0  # älteste Datei = Original-Vorschlag
+                is_original = idx == 0  # Index 0 = Original-Vorschlag (siehe DuplicateGroup-Sortierkonvention)
                 child = QTreeWidgetItem([
                     "",
-                    entry.path.name + ("  🟢 Original" if is_original else ""),
+                    entry.path.name + (original_badge if is_original else ""),
                     str(entry.path.parent),
                     engine.format_size(entry.size),
                     _format_mtime(entry.mtime),
@@ -449,7 +522,7 @@ class DuplicateFinderApp(QWidget):
                 child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
                 child.setCheckState(COL_CHECK, Qt.Unchecked if is_original else Qt.Checked)
                 if is_original:
-                    child.setToolTip(COL_NAME, "Wird als Original vorgeschlagen (älteste Datei der Gruppe) - abwählbar/anders wählbar.")
+                    child.setToolTip(COL_NAME, original_tooltip)
                 group_item.addChild(child)
 
             group_item.setExpanded(True)

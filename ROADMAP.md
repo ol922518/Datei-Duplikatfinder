@@ -2,9 +2,6 @@
 
 Ideen für spätere Erweiterungen, nicht in der aktuellen Version enthalten:
 
-- **Ähnliche Bilder erkennen (Near-Duplicates)**: Perceptual Hashing
-  (pHash/dHash) zusätzlich zum exakten SHA-256-Vergleich, um z.B.
-  verkleinerte oder neu komprimierte Kopien eines Fotos zu finden.
 - **Ähnliche Dokumente erkennen**: Textinhalt-Vergleich (z.B. Shingling)
   für Word/PDF - findet z.B. zwei Fassungen desselben Textes mit kleinen
   Änderungen.

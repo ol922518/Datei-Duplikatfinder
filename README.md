@@ -43,17 +43,25 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    ein; abschaltbar für einen Vergleich nur der obersten Ebene. Die
    Einstellung wird gemerkt. Über das ℹ️-Symbol steht, wonach genau
    verglichen wird (siehe auch nächster Abschnitt).
+   „🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)“ – standardmäßig
+   **aus** – findet zusätzlich Bilder, die sich zwar leicht unterscheiden
+   (andere Auflösung, erneut komprimiert), aber ganz ähnlich aussehen
+   (Perceptual Hashing statt exaktem Vergleich, siehe nächster Abschnitt).
+   Braucht das Paket `Pillow` – fehlt es, bleibt die Option wirkungslos
+   (Hinweis daneben).
 3. **„🔍 Auf Duplikate prüfen“** – durchsucht die Quelle(n) in einem
    Hintergrund-Thread (die Oberfläche bleibt währenddessen bedienbar) und
    zeigt den Fortschritt an.
-4. **Ergebnis** – je gefundene Duplikat-Gruppe eine Zeile mit Anzahl
-   Dateien und einsparbarem Speicherplatz, darunter aufgeklappt die
-   einzelnen Dateien mit Pfad, Größe und Änderungsdatum. Die **älteste
-   Datei** je Gruppe ist mit „🟢 Original“ markiert und ihr Häkchen
-   standardmäßig **nicht** gesetzt – alle anderen Dateien der Gruppe sind
-   angehakt. Über **„☑ Alle auswählen“**/„☐ Alle abwählen“ lässt sich das
-   für alle Zeilen auf einmal umschalten, **„↺ Auswahl zurücksetzen“**
-   stellt die ursprüngliche Vorauswahl (älteste Datei = Original) wieder
+4. **Ergebnis** – je gefundene Gruppe eine Zeile mit Anzahl Dateien und
+   einsparbarem Speicherplatz, darunter aufgeklappt die einzelnen Dateien
+   mit Pfad, Größe und Änderungsdatum. Bei exakten Duplikaten ist die
+   **älteste Datei** je Gruppe mit „🟢 Original“ markiert, bei ähnlichen
+   Bildern („🖼️ Ähnliche Bilder N“, mit ungefährem Ähnlichkeitswert in der
+   Gruppenzeile) die **größte Datei** mit „🖼️ Beste Qualität“ – deren
+   Häkchen ist jeweils standardmäßig **nicht** gesetzt, alle anderen
+   Dateien der Gruppe sind angehakt. Über **„☑ Alle auswählen“**/
+   „☐ Alle abwählen“ lässt sich das für alle Zeilen auf einmal umschalten,
+   **„↺ Auswahl zurücksetzen“** stellt die ursprüngliche Vorauswahl wieder
    her.
 5. **„🗂 Ausgewählte in 'Duplikate'-Ordner verschieben“** – verschiebt alle
    angehakten Dateien in einen Unterordner `Duplikate` der jeweiligen
@@ -73,9 +81,17 @@ großen Dateien nicht unnötig viel lesen zu müssen:
 3. **Volle Prüfsumme** (SHA-256) – nur noch für die verbliebenen
    Kandidaten berechnet, das ist die verlässliche Bestätigung.
 
-0-Byte-Dateien werden ignoriert. Ähnliche, aber nicht bit-identische
-Dateien (z.B. dasselbe Foto in anderer Auflösung/Kompression) werden
-aktuell **nicht** erkannt – siehe [ROADMAP.md](ROADMAP.md).
+0-Byte-Dateien werden ignoriert.
+
+**Ähnliche Bilder** (optionale Zusatzoption, siehe oben) werden dagegen
+über einen **Bildvergleich** erkannt, nicht über exakte Prüfsummen: Jedes
+Bild wird auf 8×8 Graustufen-Pixel verkleinert und daraus ein 64-Bit
+„Differenz-Hash“ (dHash) gebildet - zwei Bilder gelten als ähnlich, wenn
+sich ihre Hashes in höchstens 10 der 64 Bits unterscheiden. Das ist robust
+gegen erneutes Speichern/Skalieren/leichte Bearbeitung, kann aber auch mal
+tatsächlich unterschiedliche Bilder als „ähnlich“ einstufen – deshalb vor
+dem Verschieben prüfen. Nur Bilder, die nicht schon als exaktes Duplikat
+erkannt wurden, werden hierfür verglichen (keine doppelten Gruppen).
 
 ## Projektstruktur
 

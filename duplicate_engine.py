@@ -27,9 +27,19 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from PIL import Image
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+
 PARTIAL_HASH_BYTES = 64 * 1024  # 64 KB
 CHUNK_SIZE = 1024 * 1024  # 1 MB - Lesepuffer für den vollen Hash
 DUPLICATES_FOLDER_NAME = "Duplikate"
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}
+PHASH_SIZE = 8  # 8x8 -> 64-Bit-Hash
+SIMILARITY_THRESHOLD = 10  # von 64 Bits verschieden - toleriert leichte Unterschiede
 
 SETTINGS_FILE = Path(__file__).parent / "app_settings.json"
 LOG_FILE = Path(__file__).parent / ".last_move_log.json"
@@ -44,12 +54,20 @@ class FileEntry:
 
 @dataclass
 class DuplicateGroup:
-    """Eine Gruppe inhaltlich identischer Dateien. `files` ist nach
-    Änderungsdatum aufsteigend sortiert (älteste zuerst) - die älteste Datei
-    gilt als Vorschlag fürs "Original" (in main.py vorausgewählt, aber vom
-    Nutzer per Häkchen änderbar)."""
+    """Eine Gruppe inhaltlich identischer ("exact") oder visuell ähnlicher
+    ("similar", nur bei Bildern) Dateien.
+
+    Bei `kind == "exact"` ist `files` nach Änderungsdatum aufsteigend
+    sortiert (älteste zuerst) - die älteste Datei gilt als Vorschlag fürs
+    "Original". Bei `kind == "similar"` nach Dateigröße absteigend (größte
+    zuerst) - die größte Datei gilt als Vorschlag (vermutlich beste
+    Qualität). In main.py ist jeweils Index 0 vorausgewählt zum Behalten,
+    vom Nutzer per Häkchen änderbar. `similarity` (nur bei "similar") ist
+    die durchschnittliche Ähnlichkeit aller Datei-Paare der Gruppe (0..1)."""
 
     files: list[FileEntry]
+    kind: str = "exact"
+    similarity: float | None = None
 
     @property
     def size(self) -> int:
@@ -59,7 +77,12 @@ class DuplicateGroup:
     def wasted_bytes(self) -> int:
         """Speicherplatz, der sich durch Entfernen aller bis auf eine Datei
         aus dieser Gruppe sparen ließe."""
-        return self.size * (len(self.files) - 1)
+        if self.kind == "exact":
+            return self.size * (len(self.files) - 1)
+        # Bei "similar" haben die Dateien unterschiedliche Größen - alle bis
+        # auf die größte (die vorausgewählt bleibt) zählen als einsparbar.
+        sizes = sorted((f.size for f in self.files), reverse=True)
+        return sum(sizes[1:])
 
 
 # ---------------------------------------------------------------------------
@@ -105,17 +128,9 @@ def _full_hash(path: Path) -> str:
 # Duplikat-Suche
 # ---------------------------------------------------------------------------
 
-def scan_for_duplicates(sources: list[Path], recursive: bool = True,
-                         progress_callback=None) -> list[DuplicateGroup]:
-    """Durchsucht die gegebenen Quellen (Ordner und/oder einzelne Dateien)
-    und liefert alle gefundenen Duplikat-Gruppen (mind. 2 Dateien je
-    Gruppe) - Gruppe mit dem meisten verschwendeten Speicherplatz zuerst.
-
-    `progress_callback(done, total, phase)` wird optional nach jeder
-    verarbeiteten Datei aufgerufen (phase: "partial"/"full") - für eine
-    Fortschrittsanzeige in der Oberfläche. Nicht mehr lesbare Dateien
-    (fehlende Berechtigung, währenddessen gelöscht, ...) werden übersprungen.
-    """
+def collect_files(sources: list[Path], recursive: bool = True) -> list[Path]:
+    """Löst die gegebenen Quellen (Ordner und/oder einzelne Dateien) zu einer
+    flachen, deduplizierten Liste von Dateipfaden auf."""
     all_files: list[Path] = []
     seen: set[Path] = set()
     for src in sources:
@@ -127,7 +142,27 @@ def scan_for_duplicates(sources: list[Path], recursive: bool = True,
         elif src.is_file() and src not in seen:
             seen.add(src)
             all_files.append(src)
+    return all_files
 
+
+def scan_for_duplicates(sources: list[Path], recursive: bool = True,
+                         progress_callback=None) -> list[DuplicateGroup]:
+    """Durchsucht die gegebenen Quellen und liefert alle gefundenen exakten
+    Duplikat-Gruppen - Komfort-Wrapper um collect_files() + find_exact_duplicates()
+    (siehe dort für Details zu progress_callback)."""
+    return find_exact_duplicates(collect_files(sources, recursive=recursive), progress_callback=progress_callback)
+
+
+def find_exact_duplicates(all_files: list[Path], progress_callback=None) -> list[DuplicateGroup]:
+    """Gruppiert die gegebenen Dateien nach exakt identischem Inhalt (mind. 2
+    Dateien je Gruppe) - Gruppe mit dem meisten verschwendeten Speicherplatz
+    zuerst.
+
+    `progress_callback(done, total, phase)` wird optional nach jeder
+    verarbeiteten Datei aufgerufen (phase: "partial"/"full") - für eine
+    Fortschrittsanzeige in der Oberfläche. Nicht mehr lesbare Dateien
+    (fehlende Berechtigung, währenddessen gelöscht, ...) werden übersprungen.
+    """
     # Stufe 1: nach Dateigröße gruppieren.
     by_size: dict[int, list[Path]] = {}
     for f in all_files:
@@ -185,7 +220,117 @@ def scan_for_duplicates(sources: list[Path], recursive: bool = True,
             continue
         entries.sort(key=lambda pair: pair[1])  # älteste zuerst -> Original-Vorschlag
         files = [FileEntry(path=p, size=p.stat().st_size, mtime=mtime) for p, mtime in entries]
-        groups.append(DuplicateGroup(files=files))
+        groups.append(DuplicateGroup(files=files, kind="exact"))
+
+    groups.sort(key=lambda g: g.wasted_bytes, reverse=True)
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# Ähnliche Bilder (Perceptual Hashing, "near-duplicates")
+# ---------------------------------------------------------------------------
+
+def is_image(path: Path) -> bool:
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
+def _dhash(path: Path, hash_size: int = PHASH_SIZE) -> int | None:
+    """Differenz-Hash (dHash): verkleinert das Bild auf (hash_size+1)x
+    hash_size Graustufen-Pixel und kodiert je Zeile, ob ein Pixel heller als
+    sein rechter Nachbar ist, als ein Bit. Robust gegen leichte Änderungen
+    durch erneutes Speichern/Skalieren/Komprimieren - anders als der exakte
+    SHA-256-Vergleich oben. Liefert None, wenn Pillow fehlt oder die Datei
+    sich nicht als Bild öffnen lässt."""
+    if not PILLOW_AVAILABLE:
+        return None
+    try:
+        with Image.open(path) as img:
+            img = img.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
+            pixels = list(img.getdata())
+    except Exception:
+        return None
+    bits = 0
+    for row in range(hash_size):
+        offset = row * (hash_size + 1)
+        for col in range(hash_size):
+            bits = (bits << 1) | (1 if pixels[offset + col] < pixels[offset + col + 1] else 0)
+    return bits
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
+def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRESHOLD,
+                             progress_callback=None) -> list[DuplicateGroup]:
+    """Gruppiert Bilddateien unter den gegebenen `files` nach visueller
+    Ähnlichkeit (Perceptual Hashing, nicht exakter Bytevergleich) - findet
+    z.B. dasselbe Foto in anderer Auflösung/Kompression. `files` sollte
+    bereits um exakte Duplikate bereinigt sein (siehe main.py), sonst
+    entstünden doppelte Gruppen für dieselben Dateien.
+
+    Zwei Bilder gelten als ähnlich, wenn sich ihre 64-Bit-Hashes in höchstens
+    `threshold` Bits unterscheiden. Mehrere paarweise ähnliche Bilder werden
+    transitiv zu einer gemeinsamen Gruppe zusammengefasst (Union-Find).
+    Braucht Pillow (PILLOW_AVAILABLE) - ohne das Paket liefert diese Funktion
+    eine leere Liste.
+    """
+    if not PILLOW_AVAILABLE:
+        return []
+
+    images = [f for f in files if is_image(f)]
+    hashes: dict[Path, int] = {}
+    for i, f in enumerate(images):
+        h = _dhash(f)
+        if h is not None:
+            hashes[f] = h
+        if progress_callback:
+            progress_callback(i + 1, len(images), "phash")
+
+    paths = list(hashes.keys())
+    parent = {p: p for p in paths}
+
+    def find(x: Path) -> Path:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: Path, b: Path) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            if _hamming(hashes[paths[i]], hashes[paths[j]]) <= threshold:
+                union(paths[i], paths[j])
+
+    clusters: dict[Path, list[Path]] = {}
+    for p in paths:
+        clusters.setdefault(find(p), []).append(p)
+
+    groups = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        entries = []
+        for p in members:
+            try:
+                stat = p.stat()
+            except OSError:
+                continue
+            entries.append(FileEntry(path=p, size=stat.st_size, mtime=stat.st_mtime))
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda e: e.size, reverse=True)  # größte zuerst -> Original-Vorschlag (beste Qualität)
+
+        pair_similarities = [
+            1 - _hamming(hashes[members[i]], hashes[members[j]]) / (PHASH_SIZE * PHASH_SIZE)
+            for i in range(len(members)) for j in range(i + 1, len(members))
+        ]
+        similarity = sum(pair_similarities) / len(pair_similarities) if pair_similarities else None
+        groups.append(DuplicateGroup(files=entries, kind="similar", similarity=similarity))
 
     groups.sort(key=lambda g: g.wasted_bytes, reverse=True)
     return groups

@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
-from qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, flow_row
+from qt_widgets import InfoIcon, TitledFrame, TwoColumnFrame, flow_row
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
@@ -188,13 +188,17 @@ class DuplicateFinderApp(QWidget):
         scroll.setWidget(body_widget)
         outer.addWidget(scroll, 1)
 
-        # Quelle links, Ergebnis rechts - per Maus verschiebbarer Trenner
-        # (ResizableSplitFrame), der bei schmalem Fenster automatisch auf
-        # untereinander umschaltet (siehe qt_widgets.py).
-        split = ResizableSplitFrame(min_width_left=280, min_width_right=420, left_stretch=1, right_stretch=2)
-        body.addWidget(split, 1)
-        self._build_source_section(split.left.layout())
-        self._build_result_section(split.right.layout())
+        # Reihe 1 (Einstellungen): zwei Spalten - Quellordner (Drop-Zone)
+        # links, Optionen (Häkchen + Scan-Button) rechts - wie beim
+        # Datei-Umbenenner. TwoColumnFrame bricht bei schmalem Fenster
+        # automatisch in eine gestapelte Einzelspalte um.
+        top_split = TwoColumnFrame(min_width_left=260, min_width_right=380, left_stretch=1, right_stretch=2)
+        body.addWidget(top_split)
+        self._build_source_section(top_split.left)
+        self._build_options_section(top_split.right)
+
+        # Reihe 2 (Ergebnis): volle Breite, wächst mit der Fensterhöhe.
+        self._build_result_section(body)
 
         hint = QLabel(
             "Tipp: Häkchen markiert eine Datei zum Verschieben - je Gruppe ist die älteste "
@@ -217,9 +221,14 @@ class DuplicateFinderApp(QWidget):
         self.undo_button.clicked.connect(self.undo_last)
         bottom.layout().addWidget(self.undo_button)
 
-    def _build_source_section(self, column: QVBoxLayout) -> None:
+    def _build_source_section(self, container: QWidget) -> None:
+        """Linke Spalte von Reihe 1: Quellordner (Drop-Zone mit Buttons,
+        darunter kompakt der feste Standardordner). Wächst vertikal mit
+        (QSizePolicy.Expanding), damit sie sich an der Höhe der - meist
+        etwas höheren - Optionen-Box daneben ausrichtet."""
         self.source_frame = TitledFrame("Quellordner")
-        column.addWidget(self.source_frame)
+        self.source_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        container.layout().addWidget(self.source_frame)
 
         drop_row = QWidget()
         drop_row_layout = QHBoxLayout(drop_row)
@@ -257,6 +266,16 @@ class DuplicateFinderApp(QWidget):
         self.source_frame.body_layout.addWidget(self.default_folder_label)
         self._refresh_default_folder_label()
 
+    def _build_options_section(self, container: QWidget) -> None:
+        """Rechte Spalte von Reihe 1: Optionen (Unterordner/Ähnliche Bilder
+        mit je einem Info-Symbol) und darunter der Scan-Button mit
+        Fortschrittsanzeige - alle in derselben Box. Wächst vertikal mit
+        (QSizePolicy.Expanding), damit sich Quellordner und Optionen immer
+        an der Höhe der jeweils größeren Box ausrichten."""
+        options_frame = TitledFrame("Optionen")
+        options_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        container.layout().addWidget(options_frame)
+
         options_row = flow_row(None)
         self.recursive_check = QCheckBox("Unterordner einbeziehen (rekursiv)")
         self.recursive_check.setChecked(engine.load_settings().get("recursive", True))
@@ -264,7 +283,7 @@ class DuplicateFinderApp(QWidget):
         options_row.layout().addWidget(self.recursive_check)
         options_row.layout().addWidget(InfoIcon(RECURSIVE_HELP))
         options_row.layout().addWidget(InfoIcon(COMPARE_HELP, title="Vergleichskriterium"))
-        self.source_frame.body_layout.addWidget(options_row)
+        options_frame.body_layout.addWidget(options_row)
 
         similar_row = flow_row(None)
         self.similar_check = QCheckBox("🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)")
@@ -276,7 +295,7 @@ class DuplicateFinderApp(QWidget):
             missing_label = QLabel("(Paket 'Pillow' fehlt - siehe requirements.txt)")
             missing_label.setStyleSheet("color: palette(mid);")
             similar_row.layout().addWidget(missing_label)
-        self.source_frame.body_layout.addWidget(similar_row)
+        options_frame.body_layout.addWidget(similar_row)
 
         scan_row = flow_row(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
@@ -288,12 +307,12 @@ class DuplicateFinderApp(QWidget):
         scan_row.layout().addWidget(self.progress_bar)
         self.status_label = QLabel("")
         scan_row.layout().addWidget(self.status_label)
-        self.source_frame.body_layout.addWidget(scan_row)
+        options_frame.body_layout.addWidget(scan_row)
 
-    def _build_result_section(self, column: QVBoxLayout) -> None:
+    def _build_result_section(self, body: QVBoxLayout) -> None:
         result_frame = TitledFrame("Ergebnis")
         result_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        column.addWidget(result_frame, 1)
+        body.addWidget(result_frame, 1)
 
         self.summary_label = QLabel("Noch nicht gescannt.")
         result_frame.body_layout.addWidget(self.summary_label)

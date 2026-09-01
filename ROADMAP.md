@@ -21,3 +21,13 @@ Ideen für spätere Erweiterungen, nicht in der aktuellen Version enthalten:
 - **Mehrere Standardordner**: aktuell lässt sich nur ein einzelner Ordner
   als fester Standard speichern (wie beim Datei-Umbenenner) - später
   evtl. eine Liste mehrerer fester Quellen.
+- **Terminal-freier Start ohne grauen Icon-Rand**: ein Versuch mit einem
+  von Hand gebauten `.app`-Bundle (Info.plist + Launcher-Skript) zeigte
+  bei mehreren Icon-Varianten und selbst nach Ad-hoc-Signierung weiterhin
+  einen leichten grauen Rand um das Icon (vermutlich behandelt macOS
+  unsignierte/nicht über Xcode gebaute App-Bundles beim Icon-Rendering
+  grundsätzlich anders als normale Dateien mit eigenem Finder-Icon - dort
+  klappt es einwandfrei, siehe `App öffnen.command`). Zurückgestellt -
+  „App öffnen.command“ bleibt der empfohlene Startweg. Für später denkbar:
+  richtige Code-Signierung mit Apple Developer ID, oder Apples neues
+  Icon-Composer-Format (Xcode 16+) statt eines einfachen `.icns`.

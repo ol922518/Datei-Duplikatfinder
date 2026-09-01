@@ -17,16 +17,14 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Alternativ per Doppelklick starten (macOS - beide nutzen das fest hinterlegte
-Python unter `/opt/homebrew/opt/python@3.14/bin/python3.14`, dort muss
-`PySide6` installiert sein):
+Alternativ per Doppelklick auf **„App öffnen.command“** (macOS - nutzt das
+fest hinterlegte Python unter `/opt/homebrew/opt/python@3.14/bin/python3.14`,
+dort muss `PySide6` installiert sein). Öffnet dabei ein Terminal-Fenster mit
+der laufenden Ausgabe.
 
-- **„Datei-Duplikatfinder.app“** – echtes App-Bundle mit eigenem Icon,
-  startet **ohne sichtbares Terminal-Fenster** (empfohlen, auch ins Dock/auf
-  den Schreibtisch ziehbar). Fehler landen bei Bedarf in `.app_launch.log`
-  im Projektordner statt in einer Terminal-Ausgabe.
-- **„App öffnen.command“** – einfaches Shell-Skript, öffnet dabei ein
-  Terminal-Fenster mit der laufenden Ausgabe (nützlich zum Debuggen).
+Ein Versuch, stattdessen ein echtes `.app`-Bundle (ohne Terminal-Fenster) zu
+bauen, zeigte einen hartnäckigen grauen Rand um das Icon und wurde
+zurückgestellt - siehe [ROADMAP.md](ROADMAP.md).
 
 Beide sind an den festen Pfad dieses Projektordners gebunden (nicht
 verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).

@@ -2,6 +2,12 @@
 # Drag & Drop mit (kein Zusatzpaket mehr nötig).
 PySide6>=6.7.0
 
+# Geteilte UI-Bausteine (FlowLayout, TitledFrame, InfoIcon, ...) - liegen als
+# eigenes, lokal editierbares Paket im Geschwister-Ordner ../qt-app-kit
+# (siehe dortige README). Muss daher als Ordner neben Datei-Duplikatfinder/
+# liegen.
+-e ../qt-app-kit
+
 # Für den exakten Duplikat-Vergleich (Hashing über die Python-Standardbibliothek
 # hashlib) wird kein weiteres Paket benötigt.
 

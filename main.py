@@ -2,8 +2,9 @@
 main.py
 -------
 Grafische Oberfläche des Datei-Duplikatfinders, auf Basis von PySide6 (Qt) -
-strukturell an den Datei-Umbenenner angelehnt (gleiche Bausteine aus
-qt_widgets.py, gleiches Muster für Quellordner-Auswahl/Standardordner).
+strukturell an den Datei-Umbenenner angelehnt (gleiche Bausteine aus dem
+geteilten qt_app_kit-Paket, gleiches Muster für Quellordner-Auswahl/
+Standardordner).
 
 Die eigentliche Vergleichs-/Verschiebe-Logik ist unabhängig von der
 Oberfläche in duplicate_engine.py.
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 
 import duplicate_engine as engine
 from document_viewer import DocumentViewer
-from qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, TwoColumnFrame, flow_row
+from qt_app_kit.qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, TwoColumnFrame, flow_row
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "

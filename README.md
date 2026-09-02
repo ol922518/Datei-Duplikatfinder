@@ -9,6 +9,9 @@ eingebautem Drag & Drop - aufgebaut nach demselben Muster wie der
 
 ## Starten
 
+Setzt voraus, dass [`qt-app-kit`](../qt-app-kit) (geteilte UI-Bausteine) als
+Geschwister-Ordner neben diesem Projekt liegt.
+
 ```bash
 cd Datei-Duplikatfinder
 python3 -m venv venv
@@ -119,5 +122,5 @@ verglichen (keine doppelten Gruppen).
 
 - `main.py` – Oberfläche (PySide6)
 - `duplicate_engine.py` – Scan-/Hash-/Verschiebe-Logik, unabhängig von der Oberfläche
-- `qt_widgets.py` – wiederverwendbare UI-Bausteine (identisch zum Datei-Umbenenner)
+- UI-Bausteine (`TitledFrame`, `InfoIcon`, …) kommen aus dem geteilten [`qt-app-kit`](../qt-app-kit)-Paket (Geschwister-Ordner, siehe „Starten“)
 - `document_viewer.py` – Datei-Viewer (identisch zum Datei-Umbenenner)

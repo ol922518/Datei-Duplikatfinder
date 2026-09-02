@@ -289,6 +289,51 @@ def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+# Sicherheitsnetz gegen exponentielle Laufzeit der Cliquen-Suche (Bron-
+# Kerbosch, siehe _find_cliques) bei sehr großen, dicht vernetzten
+# Nachbarschaften - in der Praxis bei Foto-Duplikaten unüblich (meist
+# einstellige bis niedrige zweistellige Gruppengrößen).
+MAX_CLIQUE_NEIGHBORHOOD_SIZE = 60
+
+
+def _avg_pair_similarity(members, hashes: dict[Path, int]) -> float:
+    members = list(members)
+    if len(members) < 2:
+        return 0.0
+    sims = [
+        1 - _hamming(hashes[members[i]], hashes[members[j]]) / (PHASH_SIZE * PHASH_SIZE)
+        for i in range(len(members)) for j in range(i + 1, len(members))
+    ]
+    return sum(sims) / len(sims)
+
+
+def _find_cliques(members: list[Path], adjacency: dict[Path, set[Path]]) -> list[set[Path]]:
+    """Findet alle maximalen Cliquen (Bron-Kerbosch, ohne Pivot) innerhalb
+    `members` - Teilmengen, in denen WIRKLICH jedes Bild zu jedem anderen
+    ähnlich genug ist (nicht nur transitiv über eine Kette verbunden, siehe
+    scan_for_similar_images). Bei zu großen Nachbarschaften (siehe
+    MAX_CLIQUE_NEIGHBORHOOD_SIZE) wird ersatzweise die gesamte Nachbarschaft
+    als eine einzige (lockerere) Gruppe zurückgegeben, um keine exponentielle
+    Laufzeit zu riskieren."""
+    if len(members) > MAX_CLIQUE_NEIGHBORHOOD_SIZE:
+        return [set(members)]
+
+    cliques: list[set[Path]] = []
+
+    def bron_kerbosch(r: set[Path], p: set[Path], x: set[Path]) -> None:
+        if not p and not x:
+            if len(r) >= 2:
+                cliques.append(set(r))
+            return
+        for v in list(p):
+            bron_kerbosch(r | {v}, p & adjacency[v], x & adjacency[v])
+            p = p - {v}
+            x = x | {v}
+
+    bron_kerbosch(set(), set(members), set())
+    return cliques
+
+
 def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRESHOLD,
                              progress_callback=None) -> list[DuplicateGroup]:
     """Gruppiert Bilddateien unter den gegebenen `files` nach visueller
@@ -298,8 +343,15 @@ def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRES
     entstünden doppelte Gruppen für dieselben Dateien.
 
     Zwei Bilder gelten als ähnlich, wenn sich ihre 64-Bit-Hashes in höchstens
-    `threshold` Bits unterscheiden. Mehrere paarweise ähnliche Bilder werden
-    transitiv zu einer gemeinsamen Gruppe zusammengefasst (Union-Find).
+    `threshold` Bits unterscheiden. Innerhalb einer Gruppe muss das für
+    JEDES Paar gelten (echte Cliquen, siehe _find_cliques) - nicht nur
+    transitiv über eine Kette verbunden sein. Sonst könnten z.B. bei A~B und
+    B~C auch A und C in derselben Gruppe landen, obwohl A und C direkt
+    verglichen gar nicht mehr ähnlich genug sind ("Chaining"-Problem bei
+    Single-Linkage-Clustering) - das war vorher der Fall und führte zu
+    sichtbar unpassenden Gruppen. Jedes Bild landet höchstens in einer
+    Gruppe (größte/ähnlichste Cliquen zuerst vergeben).
+
     Braucht Pillow (PILLOW_AVAILABLE) - ohne das Paket liefert diese Funktion
     eine leere Liste.
     """
@@ -317,6 +369,7 @@ def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRES
 
     paths = list(hashes.keys())
     parent = {p: p for p in paths}
+    adjacency: dict[Path, set[Path]] = {p: set() for p in paths}
 
     def find(x: Path) -> Path:
         while parent[x] != x:
@@ -329,36 +382,51 @@ def scan_for_similar_images(files: list[Path], threshold: int = SIMILARITY_THRES
         if ra != rb:
             parent[ra] = rb
 
+    # Erster Durchlauf: grobe Nachbarschaften per Union-Find ermitteln (wie
+    # zuvor) - dient hier nur noch dazu, die anschließende (teurere)
+    # Cliquen-Suche auf kleine, bereits eingegrenzte Nachbarschaften zu
+    # beschränken, statt über alle Bilder auf einmal zu laufen. Gleichzeitig
+    # wird die Kantenliste (adjacency) für die Cliquen-Suche mitgesammelt.
     for i in range(len(paths)):
         for j in range(i + 1, len(paths)):
             if _hamming(hashes[paths[i]], hashes[paths[j]]) <= threshold:
                 union(paths[i], paths[j])
+                adjacency[paths[i]].add(paths[j])
+                adjacency[paths[j]].add(paths[i])
 
-    clusters: dict[Path, list[Path]] = {}
+    neighborhoods: dict[Path, list[Path]] = {}
     for p in paths:
-        clusters.setdefault(find(p), []).append(p)
+        neighborhoods.setdefault(find(p), []).append(p)
 
     groups = []
-    for members in clusters.values():
+    for members in neighborhoods.values():
         if len(members) < 2:
             continue
-        entries = []
-        for p in members:
-            try:
-                stat = p.stat()
-            except OSError:
-                continue
-            entries.append(FileEntry(path=p, size=stat.st_size, mtime=stat.st_mtime))
-        if len(entries) < 2:
-            continue
-        entries.sort(key=lambda e: e.size, reverse=True)  # größte zuerst -> Original-Vorschlag (beste Qualität)
 
-        pair_similarities = [
-            1 - _hamming(hashes[members[i]], hashes[members[j]]) / (PHASH_SIZE * PHASH_SIZE)
-            for i in range(len(members)) for j in range(i + 1, len(members))
-        ]
-        similarity = sum(pair_similarities) / len(pair_similarities) if pair_similarities else None
-        groups.append(DuplicateGroup(files=entries, kind="similar", similarity=similarity))
+        cliques = _find_cliques(members, adjacency)
+        # Größte Cliquen zuerst, bei Gleichstand die mit der höheren
+        # durchschnittlichen Ähnlichkeit - so werden die "saubersten"
+        # Gruppen zuerst vergeben.
+        cliques.sort(key=lambda c: (len(c), _avg_pair_similarity(c, hashes)), reverse=True)
+
+        already_used: set[Path] = set()
+        for clique in cliques:
+            if clique & already_used:
+                continue  # Bild schon einer besseren Clique zugeordnet
+            already_used |= clique
+
+            entries = []
+            for p in clique:
+                try:
+                    stat = p.stat()
+                except OSError:
+                    continue
+                entries.append(FileEntry(path=p, size=stat.st_size, mtime=stat.st_mtime))
+            if len(entries) < 2:
+                continue
+            entries.sort(key=lambda e: e.size, reverse=True)  # größte zuerst -> Original-Vorschlag (beste Qualität)
+
+            groups.append(DuplicateGroup(files=entries, kind="similar", similarity=_avg_pair_similarity(clique, hashes)))
 
     groups.sort(key=lambda g: g.wasted_bytes, reverse=True)
     return groups

@@ -108,8 +108,12 @@ Bild wird auf 8×8 Graustufen-Pixel verkleinert und daraus ein 64-Bit
 sich ihre Hashes in höchstens 10 der 64 Bits unterscheiden. Das ist robust
 gegen erneutes Speichern/Skalieren/leichte Bearbeitung, kann aber auch mal
 tatsächlich unterschiedliche Bilder als „ähnlich“ einstufen – deshalb vor
-dem Verschieben prüfen. Nur Bilder, die nicht schon als exaktes Duplikat
-erkannt wurden, werden hierfür verglichen (keine doppelten Gruppen).
+dem Verschieben prüfen. Innerhalb einer Gruppe muss das für **jedes Paar**
+gelten (nicht nur transitiv über eine Kette verbunden sein) - sonst könnten
+z.B. bei „A ähnlich B“ und „B ähnlich C“ auch A und C in derselben Gruppe
+landen, obwohl sie direkt verglichen gar nicht mehr ähnlich genug sind. Nur
+Bilder, die nicht schon als exaktes Duplikat erkannt wurden, werden hierfür
+verglichen (keine doppelten Gruppen).
 
 ## Projektstruktur
 

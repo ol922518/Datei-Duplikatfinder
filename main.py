@@ -189,6 +189,11 @@ class DuplicateFinderApp(QWidget):
         self.sources: list[Path] = []
         self.groups: list[engine.DuplicateGroup] = []
         self._worker: ScanWorker | None = None
+        # Pfad der aktuell im Viewer gezeigten Datei - damit _rebuild_tree()
+        # die Vorschau nur dann leert, wenn genau diese Datei betroffen war
+        # (verschoben/gelöscht), statt sie bei jedem Neuaufbau grundsätzlich
+        # zu verwerfen (siehe _remove_paths_from_results()).
+        self._current_preview_path: Path | None = None
 
         self._build_ui()
         self._update_undo_button()
@@ -600,7 +605,12 @@ class DuplicateFinderApp(QWidget):
     def _rebuild_tree(self) -> None:
         self.tree.blockSignals(True)
         self.tree.clear()
-        self.viewer.clear()
+        # Vorschau nur leeren, wenn die dort gezeigte Datei nicht mehr
+        # existiert (z.B. gerade verschoben/gelöscht) - bleibt sie erhalten,
+        # zeigt der Viewer sie nach dem Neuaufbau unverändert weiter an,
+        # statt bei jeder Aktion ins Leere zu springen.
+        if self._current_preview_path is None or not self._current_preview_path.exists():
+            self.viewer.clear()
 
         exact_i = 0
         similar_i = 0
@@ -658,13 +668,16 @@ class DuplicateFinderApp(QWidget):
         Viewer-Panel an (siehe DocumentViewer) - Gruppenzeilen selbst haben
         keinen Dateipfad und leeren den Viewer stattdessen."""
         if current is None:
+            self._current_preview_path = None
             self.viewer.clear()
             return
         path_str = current.data(COL_CHECK, Qt.UserRole)
         if not path_str:
+            self._current_preview_path = None
             self.viewer.clear()
             return
-        self.viewer.show_file(Path(path_str))
+        self._current_preview_path = Path(path_str)
+        self.viewer.show_file(self._current_preview_path)
 
     def _iter_child_items(self):
         for i in range(self.tree.topLevelItemCount()):
@@ -718,9 +731,10 @@ class DuplicateFinderApp(QWidget):
 
         self._update_undo_button()
         self.status_label.setText(f"{len(performed)} Datei(en) verschoben.")
-        # Betroffene Quellen neu einlesen, damit die Tabelle wieder dem
-        # tatsächlichen Zustand auf der Festplatte entspricht.
-        self._load_paths(self.sources)
+        # Nur die tatsächlich verschobenen Dateien aus den Gruppen entfernen,
+        # statt den ganzen Scan zu verwerfen - der Rest der Ergebnisse (und
+        # die Vorschau, falls nicht betroffen) bleibt so erhalten.
+        self._remove_paths_from_results({Path(old) for old, _new in performed})
 
     def undo_last(self) -> None:
         ok, errors = engine.undo_last_move()
@@ -774,10 +788,27 @@ class DuplicateFinderApp(QWidget):
         else:
             QMessageBox.information(self, "Fertig", f"{count} Datei(en) in den Papierkorb verschoben.")
 
-        # _load_paths() liest die Quelle(n) neu ein und baut den Baum neu auf -
-        # nicht mehr existierende Dateien fallen dabei automatisch heraus.
-        if self.sources:
-            self._load_paths(self.sources)
+        # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
+        # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine
+        # Datei ja an ihrem Platz), statt den ganzen Scan zu verwerfen.
+        self._remove_paths_from_results({p for p in paths if not p.exists()})
+
+    def _remove_paths_from_results(self, removed_paths: set[Path]) -> None:
+        """Entfernt die angegebenen (soeben verschobenen/gelöschten) Dateien
+        aus den aktuell angezeigten Ergebnis-Gruppen, ohne den gesamten Scan
+        zu verwerfen - Gruppen, die dadurch auf unter 2 Dateien schrumpfen,
+        fallen ganz weg. So bleiben die restlichen Ergebnisse (und die
+        Vorschau, sofern die dort gezeigte Datei nicht betroffen ist)
+        erhalten, statt nach jeder Aktion einen erneuten Scan zu erzwingen."""
+        if not removed_paths:
+            return
+        new_groups = []
+        for group in self.groups:
+            remaining = [f for f in group.files if f.path not in removed_paths]
+            if len(remaining) >= 2:
+                new_groups.append(engine.DuplicateGroup(files=remaining, kind=group.kind, similarity=group.similarity))
+        self.groups = new_groups
+        self._rebuild_tree()
 
 
 def _format_mtime(timestamp: float) -> str:

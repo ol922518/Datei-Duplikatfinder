@@ -89,6 +89,14 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    Papierkorb selbst zuständig). Braucht das Paket `send2trash` - fehlt es,
    ist der Button deaktiviert (Hinweis im Tooltip).
 
+Sowohl „Verschieben" als auch „Löschen" aktualisieren die Ergebnisliste
+danach **gezielt**: nur die betroffenen Dateien verschwinden aus ihren
+Gruppen (eine Gruppe mit nur noch einer verbleibenden Datei fällt ganz
+weg) - der Rest der zuvor gefundenen Duplikate bleibt sichtbar, ein neuer
+Scan ist dafür nicht nötig. Die rechts angezeigte Vorschau bleibt dabei
+ebenfalls erhalten, solange nicht ausgerechnet die dort gezeigte Datei
+selbst betroffen war.
+
 Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
 (identisch zum Datei-Umbenenner, siehe dort für Details) die zur
 ausgewählten Zeile gehörende Datei an - PDF, Bilder (inkl. Zoom),

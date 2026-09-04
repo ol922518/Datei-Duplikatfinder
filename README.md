@@ -80,6 +80,14 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    Quelle bleibt jeweils erhalten). Nichts wird gelöscht. **„↺ Verschieben
    rückgängig machen“** macht die zuletzt durchgeführte Aktion wieder
    vollständig rückgängig.
+6. **„🗑 Markierte Zeilen löschen“** (identisch zum Datei-Umbenenner) –
+   verschiebt die per Maus im Baum **markierten** Dateien (anklicken, mit
+   Shift für zusammenhängende bzw. Cmd für einzelne Mehrfachauswahl) in den
+   System-Papierkorb - eine von den Häkchen komplett unabhängige Auswahl.
+   Landet im Papierkorb, nicht endgültig gelöscht, aber auch nicht über die
+   eingebaute Rückgängig-Funktion wiederherstellbar (dafür ist der
+   Papierkorb selbst zuständig). Braucht das Paket `send2trash` - fehlt es,
+   ist der Button deaktiviert (Hinweis im Tooltip).
 
 Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
 (identisch zum Datei-Umbenenner, siehe dort für Details) die zur

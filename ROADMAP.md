@@ -21,17 +21,6 @@
   Palette-Rollen/Icons, um sichtbar zu bleiben; zu prüfen auch im
   hellen Modus). Muss vor der nächsten Verschieben-Aktion behoben
   werden, da die Auswahl sonst nicht mehr nachvollziehbar ist.
-- **Direktes Löschen statt Verschieben**: technisch problemlos machbar
-  (z.B. `Path.unlink()` statt `shutil.move()` in
-  `move_to_duplicates_folder()`/eine neue Schwesterfunktion). Als
-  zusätzliche, explizit zu bestätigende Option neben dem heutigen
-  (sicheren) Verschieben - ausgewählte Dateien würden dann direkt in
-  ihrem jeweiligen Quellordner gelöscht statt in „Duplikate“/den
-  Zielordner verschoben. Empfehlung fürs Gespräch morgen: über den
-  macOS-Papierkorb löschen (wiederherstellbar) statt endgültig, damit
-  die App ihre bisherige "nichts geht verloren"-Linie beibehält - dafür
-  bräuchte es entweder ein Zusatzpaket (z.B. `send2trash`) oder einen
-  AppleScript-/`NSWorkspace`-Aufruf wie beim App-Icon-Setzen.
 - **Ähnliche Dokumente erkennen**: Textinhalt-Vergleich (z.B. Shingling)
   für Word/PDF - findet z.B. zwei Fassungen desselben Textes mit kleinen
   Änderungen.

@@ -19,6 +19,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QFileDialog,
@@ -385,9 +386,34 @@ class DuplicateFinderApp(QWidget):
         self.tree.setColumnWidth(COL_CHECK, 28)
         self.tree.setColumnWidth(COL_NAME, 220)
         self.tree.setMinimumHeight(260)
+        # Mehrfachauswahl per Maus (Shift-Klick zusammenhängend, Cmd-Klick
+        # einzeln) - unabhängig vom Häkchen zum Verschieben, siehe
+        # "🗑 Markierte Zeilen löschen" unten.
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.currentItemChanged.connect(self._on_current_item_changed)
         result_split.left.layout().addWidget(self.tree)
+
+        # Eigene Zeile unterhalb des Baums, bewusst getrennt von "Alle
+        # auswählen"/"Alle abwählen" oben (die beziehen sich auf das Häkchen
+        # zum Verschieben) - hier geht es um die per Maus MARKIERTEN Zeilen,
+        # eine eigene, unabhängige Auswahl. Identisch zum Datei-Umbenenner.
+        delete_row = flow_row(result_split.left.layout())
+        self.delete_selected_btn = QPushButton("🗑 Markierte Zeilen löschen")
+        self.delete_selected_btn.setToolTip(
+            "Verschiebt die im Baum markierten (angeklickten) Dateien in den "
+            "Papierkorb - unabhängig vom Häkchen zum Verschieben. Mehrfachauswahl per "
+            "Shift-Klick (zusammenhängend) oder Cmd-Klick (einzeln) möglich."
+        )
+        self.delete_selected_btn.clicked.connect(self._delete_selected)
+        if not engine.HAS_SEND2TRASH:
+            self.delete_selected_btn.setEnabled(False)
+            self.delete_selected_btn.setToolTip(
+                "Nicht verfügbar - dafür fehlt das Paket 'send2trash' "
+                "(siehe requirements.txt: pip install -r requirements.txt)."
+            )
+        delete_row.layout().addWidget(self.delete_selected_btn)
 
         self.viewer = DocumentViewer()
         self.viewer.setMinimumWidth(220)
@@ -712,6 +738,46 @@ class DuplicateFinderApp(QWidget):
 
     def _update_undo_button(self) -> None:
         self.undo_button.setEnabled(engine.has_undo())
+
+    def _delete_selected(self) -> None:
+        """Verschiebt die per Maus im Baum markierten Dateien in den
+        Papierkorb (Button "🗑 Markierte Zeilen löschen") - unabhängig vom
+        Häkchen zum Verschieben, das eine andere, unabhängige Auswahl ist.
+        Gruppenzeilen selbst haben keinen Dateipfad und werden ignoriert,
+        falls mitmarkiert. Identisch zum Datei-Umbenenner übernommen."""
+        paths = []
+        for item in self.tree.selectedItems():
+            path_str = item.data(COL_CHECK, Qt.UserRole)
+            if path_str:
+                paths.append(Path(path_str))
+        if not paths:
+            QMessageBox.information(
+                self, "Keine Auswahl",
+                "Bitte zuerst eine oder mehrere Zeilen im Baum markieren "
+                "(anklicken, mit Shift/Cmd für mehrere).",
+            )
+            return
+
+        names = "\n".join(p.name for p in paths[:10])
+        if len(paths) > 10:
+            names += f"\n… und {len(paths) - 10} weitere"
+        if QMessageBox.question(
+            self, "In den Papierkorb verschieben",
+            f"{len(paths)} Datei(en) werden in den Papierkorb verschoben:\n\n{names}\n\nFortfahren?",
+        ) != QMessageBox.Yes:
+            return
+
+        count, errors = engine.move_to_trash(paths)
+        if errors:
+            QMessageBox.warning(self, "Teilweise erfolgreich",
+                                 f"{count} in den Papierkorb verschoben, {len(errors)} Fehler:\n" + "\n".join(errors))
+        else:
+            QMessageBox.information(self, "Fertig", f"{count} Datei(en) in den Papierkorb verschoben.")
+
+        # _load_paths() liest die Quelle(n) neu ein und baut den Baum neu auf -
+        # nicht mehr existierende Dateien fallen dabei automatisch heraus.
+        if self.sources:
+            self._load_paths(self.sources)
 
 
 def _format_mtime(timestamp: float) -> str:

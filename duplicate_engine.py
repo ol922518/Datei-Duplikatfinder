@@ -41,6 +41,16 @@ try:
 except ImportError:
     HAS_DOCX = False
 
+try:
+    # Verschiebt Dateien plattformübergreifend in den System-Papierkorb
+    # (macOS/Windows/Linux) statt sie endgültig zu löschen - für den
+    # "🗑 Markierte Zeilen löschen"-Button in main.py (siehe move_to_trash()
+    # weiter unten). Identisch zum Datei-Umbenenner übernommen.
+    import send2trash
+    HAS_SEND2TRASH = True
+except ImportError:
+    HAS_SEND2TRASH = False
+
 PARTIAL_HASH_BYTES = 64 * 1024  # 64 KB
 CHUNK_SIZE = 1024 * 1024  # 1 MB - Lesepuffer für den vollen Hash
 DUPLICATES_FOLDER_NAME = "Duplikate"
@@ -638,6 +648,28 @@ def undo_last_move() -> tuple[int, list[str]]:
             errors.append(f"{new_path.name}: {exc}")
     LOG_FILE.unlink(missing_ok=True)
     return ok, errors
+
+
+def move_to_trash(paths: list[Path]) -> tuple[int, list[str]]:
+    """Verschiebt die angegebenen Dateien in den System-Papierkorb (nicht
+    endgültig, im Unterschied zu move_to_duplicates_folder()/undo_last_move()
+    aber auch nicht über eigene Rückgängig-Funktion rückholbar - dafür ist
+    der Papierkorb selbst zuständig). Gibt (Anzahl, Fehler) zurück. Ohne
+    installiertes send2trash (siehe HAS_SEND2TRASH) wird nichts gelöscht -
+    main.py deaktiviert den zugehörigen Button in dem Fall bereits vorher.
+    Identisch zum Datei-Umbenenner übernommen."""
+    if not HAS_SEND2TRASH:
+        return 0, ["Paket 'send2trash' nicht installiert - siehe requirements.txt."]
+
+    count = 0
+    errors: list[str] = []
+    for path in paths:
+        try:
+            send2trash.send2trash(str(path))
+            count += 1
+        except OSError as e:
+            errors.append(f"{path.name}: {e}")
+    return count, errors
 
 
 # ---------------------------------------------------------------------------

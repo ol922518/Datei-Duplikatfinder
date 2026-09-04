@@ -59,35 +59,39 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    bleibt über einen Neustart hinweg erhalten), „↺ Standard“ setzt das
    wieder zurück. Liegt der zentrale Zielordner innerhalb einer der
    Quellen, wird er beim Scannen automatisch übersprungen.
-3. **„🔍 Auf Duplikate prüfen“** – durchsucht die Quelle(n) in einem
-   Hintergrund-Thread (die Oberfläche bleibt währenddessen bedienbar) und
-   zeigt den Fortschritt an.
-4. **Ergebnis** – je gefundene Gruppe eine Zeile mit Anzahl Dateien und
-   einsparbarem Speicherplatz, darunter aufgeklappt die einzelnen Dateien
-   mit Pfad, Größe und Änderungsdatum. Bei exakten Duplikaten ist die
-   **älteste Datei** je Gruppe mit „🟢 Original“ markiert, bei ähnlichen
-   Bildern („🖼️ Ähnliche Bilder N“, mit ungefährem Ähnlichkeitswert in der
-   Gruppenzeile) die **größte Datei** mit „🖼️ Beste Qualität“ – deren
-   Häkchen ist jeweils standardmäßig **nicht** gesetzt, alle anderen
-   Dateien der Gruppe sind angehakt. Über **„☑ Alle auswählen“**/
-   „☐ Alle abwählen“ lässt sich das für alle Zeilen auf einmal umschalten,
-   **„↺ Auswahl zurücksetzen“** stellt die ursprüngliche Vorauswahl wieder
-   her.
-5. **„🗂 Ausgewählte in 'Duplikate'-Ordner verschieben“** – verschiebt alle
+3. **Ergebnis** – oben der Button **„🔍 Auf Duplikate prüfen“**, der die
+   Quelle(n) in einem Hintergrund-Thread durchsucht (die Oberfläche bleibt
+   währenddessen bedienbar) und den Fortschritt anzeigt. Darunter je
+   gefundene Gruppe eine fette Trennzeile mit Anzahl Dateien und
+   einsparbarem Speicherplatz, gefolgt von den einzelnen Dateien mit
+   Häkchen, Name, Ordner, Größe und Änderungsdatum. Bei exakten Duplikaten
+   ist die **älteste Datei** je Gruppe mit vorangestelltem „🟢 Original“
+   markiert, bei ähnlichen Bildern („🖼️ Ähnliche Bilder N“, mit ungefährem
+   Ähnlichkeitswert in der Gruppenzeile) die **größte Datei** mit „🖼️ Beste
+   Qualität“ – deren Häkchen (per anklickbarer Checkbox links vom Namen)
+   ist jeweils standardmäßig **nicht** gesetzt, alle anderen Dateien der
+   Gruppe sind angehakt. Über **„☑ Alle auswählen“**/„☐ Alle abwählen“
+   lässt sich das für alle Zeilen auf einmal umschalten, **„↺ Auswahl
+   zurücksetzen“** stellt die ursprüngliche Vorauswahl wieder her. Die
+   Spalten „Datei“ und „Ordner“ lassen sich per Maus am Rand in der
+   Kopfzeile in der Breite anpassen (z.B. um lange Ablagepfade zu prüfen).
+4. **„🗂 Ausgewählte in 'Duplikate'-Ordner verschieben“** – verschiebt alle
    angehakten Dateien in den `Duplikate`-Unterordner ihrer jeweiligen
    Quelle, oder - falls unter „Optionen“ festgelegt - gemeinsam in den
    konfigurierten zentralen Zielordner (die Ordnerstruktur innerhalb der
    Quelle bleibt jeweils erhalten). Nichts wird gelöscht. **„↺ Verschieben
    rückgängig machen“** macht die zuletzt durchgeführte Aktion wieder
    vollständig rückgängig.
-6. **„🗑 Markierte Zeilen löschen“** (identisch zum Datei-Umbenenner) –
+5. **„🗑 Markierte Zeilen löschen“** (identisch zum Datei-Umbenenner) –
    verschiebt die per Maus im Baum **markierten** Dateien (anklicken, mit
    Shift für zusammenhängende bzw. Cmd für einzelne Mehrfachauswahl) in den
    System-Papierkorb - eine von den Häkchen komplett unabhängige Auswahl.
    Landet im Papierkorb, nicht endgültig gelöscht, aber auch nicht über die
    eingebaute Rückgängig-Funktion wiederherstellbar (dafür ist der
    Papierkorb selbst zuständig). Braucht das Paket `send2trash` - fehlt es,
-   ist der Button deaktiviert (Hinweis im Tooltip).
+   ist der Button deaktiviert (Hinweis im Tooltip). Daneben **„📂 Ablageort
+   öffnen“** öffnet den Finder am Ort der aktuell in der Vorschau gezeigten
+   Datei und markiert sie dort.
 
 Sowohl „Verschieben" als auch „Löschen" aktualisieren die Ergebnisliste
 danach **gezielt**: nur die betroffenen Dateien verschwinden aus ihren
@@ -98,13 +102,21 @@ ebenfalls erhalten, solange nicht ausgerechnet die dort gezeigte Datei
 selbst betroffen war.
 
 Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
-(identisch zum Datei-Umbenenner, siehe dort für Details) die zur
-ausgewählten Zeile gehörende Datei an - PDF, Bilder (inkl. Zoom),
-Text/Markdown/CSV/JSON/YAML und Word (`.docx`, sofern `python-docx`
-installiert ist). Bei echten Kamerafotos mit GPS-Daten erscheint zusätzlich
-eine Metadaten-Zeile mit einem Button „🌐 Ort ermitteln“ - das ist die
-einzige Stelle in der App, die (nur auf diesen Klick hin) eine
-Internetverbindung braucht.
+(Grundgerüst identisch zum Datei-Umbenenner) die zur ausgewählten Zeile
+gehörende Datei an - PDF, Bilder (inkl. Zoom), Text/Markdown/CSV/JSON/YAML
+und Word (`.docx`, sofern `python-docx` installiert ist). Bei Bildern und
+PDF lässt sich mit dem **Trackpad navigieren**: Zwei-Finger-Wischen
+scrollt, Zusammen-/Auseinanderziehen (Pinch) zoomt. **Zoom und Bildausschnitt
+bleiben dabei beim Wechsel zur nächsten Datei erhalten** (als relativer
+Bruchteil, nicht als Pixelwert - funktioniert daher auch bei unterschiedlich
+großen Dateien): war z.B. die rechte untere Ecke einer Datei zu sehen, zeigt
+die nächste Datei ebenfalls ihre rechte untere Ecke - praktisch, um beim
+manuellen Vergleichen mehrerer Duplikate dieselbe Stelle im Blick zu
+behalten. Der allererste Start ist echte 100 % oben links; „↺ Einpassen“
+setzt jederzeit bewusst darauf zurück. Bei echten Kamerafotos
+mit GPS-Daten erscheint zusätzlich eine Metadaten-Zeile mit einem Button
+„🌐 Ort ermitteln“ - das ist die einzige Stelle in der App, die (nur auf
+diesen Klick hin) eine Internetverbindung braucht.
 
 ## Vergleichskriterium
 

@@ -3,15 +3,27 @@ document_viewer.py
 -------------------
 Eingebauter Datei-Viewer für die Ergebnis-Tabelle: zeigt die zur aktuell
 ausgewählten Zeile gehörende Datei an, damit man ihren Inhalt vor dem
-Verschieben prüfen kann - identisch zum Datei-Viewer im Datei-Umbenenner
-übernommen (1:1 gleiche Datei, nur der engine-Import zeigt hier auf
-duplicate_engine statt rename_engine).
+Verschieben prüfen kann - ursprünglich 1:1 vom Datei-Umbenenner übernommen,
+seitdem um Touchpad-Gesten ergänzt (siehe unten) - der engine-Import zeigt
+hier auf duplicate_engine statt rename_engine.
 
 Unterstützt:
 - PDF (natives QtPdf-Widget)
 - Bilder (JPEG, PNG, TIFF, HEIC, ...) über Qts eingebaute Bildformate
 - Text/Markdown/CSV/JSON/YAML (reiner Text, Markdown mit einfacher Formatierung)
 - Word (.docx) als reiner Text (über python-docx, sofern installiert)
+
+Bedienung bei Bildern/PDF: Zwei-Finger-Wischen auf dem Trackpad scrollt
+(hoch/runter/links/rechts, über Qts eingebaute Scroll-Behandlung von
+QScrollArea/QPdfView), Zusammen-/Auseinanderziehen (Pinch) zoomt (siehe
+eventFilter() unten, macOS-Trackpad-Geste). Zoom UND Scroll-Position
+bleiben dabei beim Wechsel zur nächsten Datei erhalten (als relativer
+Bruchteil 0..1 je Achse, nicht als Pixelwert - siehe _scroll_fraction) -
+war z.B. die rechte untere Ecke der vorherigen Datei zu sehen, zeigt die
+nächste Datei ebenfalls ihre rechte untere Ecke, unabhängig von deren
+tatsächlicher Größe. Der allererste Start (noch nie manuell gezoomt/
+gescrollt) ist echte 100% oben links; "↺ Einpassen" setzt jederzeit
+bewusst darauf zurück.
 
 Alles läuft lokal, ohne Internetzugriff - passend zum Rest der App. Einzige
 Ausnahme: bei echten Kamerafotos mit GPS-Daten zeigt eine kleine Metadaten-
@@ -22,7 +34,7 @@ duplicate_engine.reverse_geocode()) - nie automatisch.
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
@@ -63,7 +75,20 @@ class DocumentViewer(QWidget):
         # None = automatisch auf Fensterbreite einpassen; sonst manuell
         # gewählter Zoomfaktor (1.0 = Originalgröße), nur für Bilder - für
         # PDF hält QPdfView seinen Zoom-Zustand selbst (zoomMode/zoomFactor).
-        self._image_zoom: float | None = None
+        # Bleibt (wie der Zoom-Zustand von self.pdf_view) bewusst über einen
+        # Dateiwechsel hinweg erhalten (siehe show_file()). Ausgangswert
+        # echte 1.0 (100%) statt None/Einpassen, damit die allererste
+        # angezeigte Datei ebenfalls bei echten 100% startet.
+        self._image_zoom: float | None = 1.0
+        # Relative Scroll-Position (0.0..1.0 je Achse) der zuletzt aktiven
+        # Bild-/PDF-Ansicht - bewusst als Bruchteil statt Pixelwert, damit
+        # z.B. "rechts unten" auch bei unterschiedlich großen Dateien
+        # vergleichbar bleibt. Wird bei jedem manuellen Scrollen aktualisiert
+        # (siehe _on_scroll_changed()) und beim Öffnen der nächsten Datei
+        # wiederhergestellt (siehe _restore_scroll_position()), damit sich
+        # beim Vergleichen mehrerer Duplikate dieselbe Stelle im Blick
+        # behalten lässt.
+        self._scroll_fraction: tuple[float, float] = (0.0, 0.0)
         # GPS-Koordinaten des aktuell angezeigten Fotos (falls vorhanden) -
         # Grundlage für den Button "🌐 Ort ermitteln" (siehe _on_geocode_clicked).
         self._current_photo_gps: tuple[float, float] | None = None
@@ -153,15 +178,43 @@ class DocumentViewer(QWidget):
         self.image_scroll.setWidget(self.image_label)
         self.stack.addWidget(self.image_scroll)
 
-        # PDF-Ansicht.
+        # PDF-Ansicht. Ausgangswert Custom/100% statt FitToWidth (siehe
+        # show_file()) - FitToWidth berechnet je nach Seiten-/Fenstergröße
+        # auch mal einen Wert über 100%, was beim allerersten Öffnen einer
+        # PDF-Datei überraschend/zufällig wirken würde.
         self.pdf_document = QPdfDocument(self)
         self.pdf_view = QPdfView()
         self.pdf_view.setDocument(self.pdf_document)
         self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(1.0)
         self.stack.addWidget(self.pdf_view)
 
+        # Pinch-Zoom per Trackpad (macOS: "Zusammen-/Auseinanderziehen") -
+        # Qt liefert das als natives Gesten-Event an das Widget unter dem
+        # Mauszeiger, hier also die Viewports von Bild-/PDF-Ansicht (siehe
+        # eventFilter() unten). Zwei-Finger-Scrollen (Pan) braucht dagegen
+        # keinen eigenen Code - QScrollArea/QPdfView verarbeiten normale
+        # Trackpad-Scroll-Gesten bereits eingebaut als Wheel-Events; über die
+        # Scrollbar-Signale wird dieselbe Bewegung zusätzlich als relative
+        # Position gemerkt (siehe _on_scroll_changed()).
+        self.image_scroll.viewport().installEventFilter(self)
+        self.pdf_view.viewport().installEventFilter(self)
+        self.image_scroll.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self.image_scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self.pdf_view.horizontalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        self.pdf_view.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+
         self._set_active_page(self.empty_page)
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.NativeGesture and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+            # event.value() ist der kleine Skalierungs-Zuwachs seit dem
+            # letzten Gesten-Frame (z.B. 0.02) - direkt als Faktor auf den
+            # aktuellen Zoom anwendbar.
+            self._adjust_zoom(1 + event.value())
+            return True
+        return super().eventFilter(obj, event)
 
     def clear(self) -> None:
         self.title_label.setText("Vorschau")
@@ -172,7 +225,13 @@ class DocumentViewer(QWidget):
     def show_file(self, path: Path) -> None:
         self.title_label.setText(path.name)
         self._current_pixmap = None
-        self._image_zoom = None
+        # Zoom (self._image_zoom bzw. der Zoom-Zustand von self.pdf_view)
+        # UND Scroll-Position (self._scroll_fraction) werden bewusst NICHT
+        # zurückgesetzt - bleiben über den Dateiwechsel hinweg erhalten
+        # (Ausgangswert beider ist echte 100% oben links, siehe __init__),
+        # bis der Nutzer selbst "↺ Einpassen" klickt. So bleibt z.B. eine in
+        # die rechte untere Ecke gezoomte Stelle beim Vergleichen mehrerer
+        # Duplikate an derselben Stelle sichtbar.
         self._update_photo_meta_bar(None)
 
         if not path.exists():
@@ -212,7 +271,9 @@ class DocumentViewer(QWidget):
         if error != QPdfDocument.Error.None_:
             self._show_message(f"PDF konnte nicht geöffnet werden:\n{path.name}")
             return
-        self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+        # Zoom-Zustand NICHT zurückgesetzt (siehe show_file()) - Ausgangswert
+        # Custom/100% kommt bereits aus __init__.
+        self._restore_scroll_position(self.pdf_view)
         self._set_active_page(self.pdf_view)
 
     def _show_image_or_unsupported(self, path: Path) -> None:
@@ -222,6 +283,7 @@ class DocumentViewer(QWidget):
             return
         self._current_pixmap = pixmap
         self._apply_scaled_pixmap()
+        self._restore_scroll_position(self.image_scroll)
         self._update_photo_meta_bar(engine.extract_photo_metadata(path))
         self._set_active_page(self.image_scroll)
 
@@ -356,12 +418,42 @@ class DocumentViewer(QWidget):
 
     def _zoom_fit(self) -> None:
         current = self.stack.currentWidget()
+        self._scroll_fraction = (0.0, 0.0)
         if current is self.image_scroll:
             self._image_zoom = None
             self._apply_scaled_pixmap()
         elif current is self.pdf_view:
             self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
             self._update_zoom_label()
+
+    def _on_scroll_changed(self, _value: int = 0) -> None:
+        """Merkt sich die aktuelle Scroll-Position der gerade aktiven Bild-/
+        PDF-Ansicht als Bruchteil (0.0..1.0) je Achse statt als Pixelwert -
+        so bleibt z.B. "rechts unten" auch bei unterschiedlich großen
+        Dateien vergleichbar (siehe _restore_scroll_position())."""
+        current = self.stack.currentWidget()
+        if current is self.image_scroll:
+            view = self.image_scroll
+        elif current is self.pdf_view:
+            view = self.pdf_view
+        else:
+            return
+        hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+        self._scroll_fraction = (
+            hbar.value() / hbar.maximum() if hbar.maximum() else 0.0,
+            vbar.value() / vbar.maximum() if vbar.maximum() else 0.0,
+        )
+
+    def _restore_scroll_position(self, view) -> None:
+        """Stellt die zuletzt gemerkte relative Scroll-Position
+        (self._scroll_fraction) in der übergebenen Bild-/PDF-Ansicht
+        wieder her - aufgerufen beim Öffnen einer neuen Datei, damit eine
+        z.B. in die rechte untere Ecke gezoomte Stelle beim Wechsel
+        erhalten bleibt."""
+        hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+        x_frac, y_frac = self._scroll_fraction
+        hbar.setValue(round(x_frac * hbar.maximum()))
+        vbar.setValue(round(y_frac * vbar.maximum()))
 
     def _update_zoom_label(self) -> None:
         # Hinweis: QPdfView.zoomFactor() liefert im Modus "FitToWidth" nicht

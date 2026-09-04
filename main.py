@@ -14,6 +14,7 @@ Starten mit:  python3 main.py
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QUrl, Qt, Signal
@@ -339,6 +340,14 @@ class DuplicateFinderApp(QWidget):
         options_frame.body_layout.addWidget(target_row)
         self._refresh_target_folder_label()
 
+    def _build_result_section(self, body: QVBoxLayout) -> None:
+        result_frame = TitledFrame("Ergebnis")
+        result_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        body.addWidget(result_frame, 1)
+
+        # Scan-Button + Fortschritt oben in der Ergebnis-Box statt in den
+        # Optionen - an der Stelle, wo vorher dauerhaft "Noch nicht
+        # gescannt." stand (der Text war nie aktualisiert worden).
         scan_row = flow_row(None)
         self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
         self.scan_button.clicked.connect(self.start_scan)
@@ -349,15 +358,7 @@ class DuplicateFinderApp(QWidget):
         scan_row.layout().addWidget(self.progress_bar)
         self.status_label = QLabel("")
         scan_row.layout().addWidget(self.status_label)
-        options_frame.body_layout.addWidget(scan_row)
-
-    def _build_result_section(self, body: QVBoxLayout) -> None:
-        result_frame = TitledFrame("Ergebnis")
-        result_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        body.addWidget(result_frame, 1)
-
-        self.summary_label = QLabel("Noch nicht gescannt.")
-        result_frame.body_layout.addWidget(self.summary_label)
+        result_frame.body_layout.addWidget(scan_row)
 
         check_row = flow_row(None)
         select_all_btn = QPushButton("☑ Alle auswählen")
@@ -385,18 +386,26 @@ class DuplicateFinderApp(QWidget):
         header = self.tree.header()
         header.setSectionResizeMode(COL_CHECK, QHeaderView.Fixed)
         header.setSectionResizeMode(COL_NAME, QHeaderView.Interactive)
-        header.setSectionResizeMode(COL_FOLDER, QHeaderView.Stretch)
+        # "Ordner" ebenfalls per Maus verschiebbar (Interactive statt
+        # Stretch) - Stretch-Spalten lassen sich in Qt nicht von Hand
+        # verschieben. "Geändert am" (letzte Spalte) übernimmt stattdessen
+        # per setStretchLastSection() das Auffüllen des restlichen Platzes.
+        header.setSectionResizeMode(COL_FOLDER, QHeaderView.Interactive)
         header.setSectionResizeMode(COL_SIZE, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(COL_MODIFIED, QHeaderView.ResizeToContents)
-        self.tree.setColumnWidth(COL_CHECK, 28)
+        header.setStretchLastSection(True)
+        self.tree.setColumnWidth(COL_CHECK, 34)  # echtes QCheckBox-Widget braucht mehr Rand als eine reine Indikatorspalte
         self.tree.setColumnWidth(COL_NAME, 220)
+        self.tree.setColumnWidth(COL_FOLDER, 260)
         self.tree.setMinimumHeight(260)
+        # Dateizeilen sind eigene Top-Level-Elemente statt echter Kinder
+        # ihrer Gruppenzeile (siehe _rebuild_tree()) - keine Einrück-Pfeile
+        # nötig, die fette Gruppenzeile trennt optisch trotzdem klar genug.
+        self.tree.setRootIsDecorated(False)
         # Mehrfachauswahl per Maus (Shift-Klick zusammenhängend, Cmd-Klick
         # einzeln) - unabhängig vom Häkchen zum Verschieben, siehe
         # "🗑 Markierte Zeilen löschen" unten.
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.currentItemChanged.connect(self._on_current_item_changed)
         result_split.left.layout().addWidget(self.tree)
 
@@ -419,6 +428,10 @@ class DuplicateFinderApp(QWidget):
                 "(siehe requirements.txt: pip install -r requirements.txt)."
             )
         delete_row.layout().addWidget(self.delete_selected_btn)
+        self.reveal_btn = QPushButton("📂 Ablageort öffnen")
+        self.reveal_btn.setToolTip("Öffnet den Finder am Ort der aktuell in der Vorschau gezeigten Datei (markiert sie dort).")
+        self.reveal_btn.clicked.connect(self._reveal_current_in_finder)
+        delete_row.layout().addWidget(self.reveal_btn)
 
         self.viewer = DocumentViewer()
         self.viewer.setMinimumWidth(220)
@@ -623,45 +636,62 @@ class DuplicateFinderApp(QWidget):
                     + f" — {engine.format_size(group.wasted_bytes)} einsparbar"
                 )
                 original_tooltip = "Wird als beste Qualität vorgeschlagen (größte Datei der Gruppe) - abwählbar/anders wählbar."
-                original_badge = "  🖼️ Beste Qualität"
+                original_badge = "🖼️ Beste Qualität  "
             else:
                 exact_i += 1
                 label = f"Gruppe {exact_i} — {len(group.files)} Dateien — {engine.format_size(group.wasted_bytes)} einsparbar"
                 original_tooltip = "Wird als Original vorgeschlagen (älteste Datei der Gruppe) - abwählbar/anders wählbar."
-                original_badge = "  🟢 Original"
+                original_badge = "🟢 Original  "
 
             group_item = QTreeWidgetItem([label, "", "", "", ""])
             bold = QFont()
             bold.setBold(True)
             group_item.setFont(0, bold)
-            group_item.setFlags(group_item.flags() & ~Qt.ItemIsUserCheckable)
             self.tree.addTopLevelItem(group_item)
             group_item.setFirstColumnSpanned(True)
 
             for idx, entry in enumerate(group.files):
                 is_original = idx == 0  # Index 0 = Original-Vorschlag (siehe DuplicateGroup-Sortierkonvention)
+                # Badge (Original/Beste Qualität) vorangestellt statt
+                # angehängt - so bleibt er unabhängig von der Länge des
+                # Dateinamens immer an derselben Stelle erkennbar.
                 child = QTreeWidgetItem([
                     "",
-                    entry.path.name + (original_badge if is_original else ""),
+                    (original_badge if is_original else "") + entry.path.name,
                     str(entry.path.parent),
                     engine.format_size(entry.size),
                     _format_mtime(entry.mtime),
                 ])
                 child.setData(COL_CHECK, Qt.UserRole, str(entry.path))
-                child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
-                child.setCheckState(COL_CHECK, Qt.Unchecked if is_original else Qt.Checked)
                 if is_original:
                     child.setToolTip(COL_NAME, original_tooltip)
-                group_item.addChild(child)
+                # Als eigenes Top-Level-Element statt group_item.addChild():
+                # QTreeWidget positioniert bei echten Kind-Elementen per
+                # setItemWidget() gesetzte Checkbox-Widgets nachweislich
+                # falsch (immer bei (0,0) statt in der jeweiligen Zeile -
+                # reproduzierbar per Pixelvergleich, unabhängig von Stil/
+                # Palette). Als Geschwister-Element klappt es einwandfrei.
+                # setRootIsDecorated(False) blendet dafür die (bei echten
+                # Kindern übliche) Einrückung/den Pfeil aus, die fette
+                # Gruppenzeile bleibt trotzdem als optische Trennung sichtbar.
+                self.tree.addTopLevelItem(child)
 
-            group_item.setExpanded(True)
+                # Echtes QCheckBox-Widget statt der eingebauten Baum-Häkchen
+                # (Qt.ItemIsUserCheckable/setCheckState) - die werden von
+                # QTreeWidget unter dem hier nötigen Fusion-Stil (siehe
+                # _dark_fusion_palette) nachweislich nicht sichtbar
+                # gezeichnet (bei QTableWidget tritt derselbe Fehler nicht
+                # auf - per Pixelvergleich verifiziert). Muss NACH dem
+                # Einfügen ins Baum-Widget gesetzt werden. setChecked() vor
+                # dem Verbinden von toggled(), damit der Aufbau selbst kein
+                # Signal auslöst.
+                checkbox = QCheckBox()
+                checkbox.setChecked(not is_original)
+                checkbox.toggled.connect(self._update_move_button)
+                self.tree.setItemWidget(child, COL_CHECK, checkbox)
 
         self.tree.blockSignals(False)
         self._update_move_button()
-
-    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        if column == COL_CHECK:
-            self._update_move_button()
 
     def _on_current_item_changed(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
         """Zeigt die zur aktuell ausgewählten Zeile gehörende Datei im
@@ -679,28 +709,43 @@ class DuplicateFinderApp(QWidget):
         self._current_preview_path = Path(path_str)
         self.viewer.show_file(self._current_preview_path)
 
+    def _reveal_current_in_finder(self) -> None:
+        """Öffnet den Finder am Ort der aktuell in der Vorschau gezeigten
+        Datei und markiert sie dort (macOS: 'open -R')."""
+        if self._current_preview_path is None:
+            QMessageBox.information(self, "Keine Auswahl", "Bitte zuerst eine Datei im Baum auswählen.")
+            return
+        if not self._current_preview_path.exists():
+            QMessageBox.warning(self, "Nicht gefunden", f"'{self._current_preview_path.name}' existiert nicht mehr.")
+            return
+        subprocess.run(["open", "-R", str(self._current_preview_path)])
+
     def _iter_child_items(self):
+        """Liefert alle Datei-Zeilen (nicht die fetten Gruppenzeilen dazwischen)
+        - beide sind gleichrangige Top-Level-Elemente (siehe _rebuild_tree()),
+        Dateizeilen aber immer mit Pfad in COL_CHECK/Qt.UserRole, Gruppenzeilen nie."""
         for i in range(self.tree.topLevelItemCount()):
-            group_item = self.tree.topLevelItem(i)
-            for j in range(group_item.childCount()):
-                yield group_item.child(j)
+            item = self.tree.topLevelItem(i)
+            if item.data(COL_CHECK, Qt.UserRole):
+                yield item
 
     def _set_all_checked(self, checked: bool) -> None:
-        self.tree.blockSignals(True)
         for child in self._iter_child_items():
-            child.setCheckState(COL_CHECK, Qt.Checked if checked else Qt.Unchecked)
-        self.tree.blockSignals(False)
+            checkbox = self.tree.itemWidget(child, COL_CHECK)
+            if checkbox is not None:
+                checkbox.setChecked(checked)
         self._update_move_button()
 
     def _reset_check_selection(self) -> None:
         self._rebuild_tree()
 
     def _checked_paths(self) -> list[Path]:
-        return [
-            Path(child.data(COL_CHECK, Qt.UserRole))
-            for child in self._iter_child_items()
-            if child.checkState(COL_CHECK) == Qt.Checked
-        ]
+        paths = []
+        for child in self._iter_child_items():
+            checkbox = self.tree.itemWidget(child, COL_CHECK)
+            if checkbox is not None and checkbox.isChecked():
+                paths.append(Path(child.data(COL_CHECK, Qt.UserRole)))
+        return paths
 
     def _update_move_button(self) -> None:
         self.move_button.setEnabled(bool(self._checked_paths()))

@@ -133,9 +133,14 @@ def list_files(folder: Path, recursive: bool, include_hidden: bool = False,
     for p in sorted(folder.glob(pattern)):
         if not p.is_file():
             continue
-        if not include_hidden and p.name.startswith("."):
+        rel_parts = p.relative_to(folder).parts
+        # Prüft ALLE Pfadteile (Datei + jeden Unterordner darüber), nicht
+        # nur den Dateinamen selbst - sonst würden z.B. Dateien in einem
+        # ".git"-Unterordner trotz include_hidden=False durchsucht, weil
+        # nur ihr eigener (unversteckter) Name geprüft wurde.
+        if not include_hidden and any(part.startswith(".") for part in rel_parts):
             continue
-        if DUPLICATES_FOLDER_NAME in p.relative_to(folder).parts[:-1]:
+        if DUPLICATES_FOLDER_NAME in rel_parts[:-1]:
             continue
         if any(_is_within(p, ex) for ex in exclude_dirs):
             continue
@@ -181,14 +186,6 @@ def collect_files(sources: list[Path], recursive: bool = True,
             seen.add(src)
             all_files.append(src)
     return all_files
-
-
-def scan_for_duplicates(sources: list[Path], recursive: bool = True,
-                         progress_callback=None) -> list[DuplicateGroup]:
-    """Durchsucht die gegebenen Quellen und liefert alle gefundenen exakten
-    Duplikat-Gruppen - Komfort-Wrapper um collect_files() + find_exact_duplicates()
-    (siehe dort für Details zu progress_callback)."""
-    return find_exact_duplicates(collect_files(sources, recursive=recursive), progress_callback=progress_callback)
 
 
 def find_exact_duplicates(all_files: list[Path], progress_callback=None) -> list[DuplicateGroup]:
@@ -257,8 +254,14 @@ def find_exact_duplicates(all_files: list[Path], progress_callback=None) -> list
         if len(entries) < 2:
             continue
         entries.sort(key=lambda pair: pair[1])  # älteste zuerst -> Original-Vorschlag
-        files = [FileEntry(path=p, size=p.stat().st_size, mtime=mtime) for p, mtime in entries]
-        groups.append(DuplicateGroup(files=files, kind="exact"))
+        files = []
+        for p, mtime in entries:
+            try:
+                files.append(FileEntry(path=p, size=p.stat().st_size, mtime=mtime))
+            except OSError:
+                continue  # zwischenzeitlich gelöscht/unlesbar geworden - wie in Stufe 1-3 überspringen statt abzubrechen
+        if len(files) >= 2:
+            groups.append(DuplicateGroup(files=files, kind="exact"))
 
     groups.sort(key=lambda g: g.wasted_bytes, reverse=True)
     return groups
@@ -315,6 +318,25 @@ def _avg_pair_similarity(members, hashes: dict[Path, int]) -> float:
         for i in range(len(members)) for j in range(i + 1, len(members))
     ]
     return sum(sims) / len(sims)
+
+
+def recompute_similarity(paths: list[Path]) -> float | None:
+    """Berechnet die durchschnittliche paarweise Ähnlichkeit (0..1) der
+    gegebenen Bilder neu - z.B. nachdem eine "Ähnliche Bilder"-Gruppe durch
+    Verschieben/Löschen einzelner Dateien geschrumpft ist und der zuvor für
+    die GESAMTE Gruppe berechnete Wert nicht mehr zu den verbleibenden
+    Dateien passt. None, wenn Pillow fehlt oder weniger als 2 Bilder lesbar
+    übrig sind (main.py zeigt dann keinen Ähnlichkeitswert an)."""
+    if not PILLOW_AVAILABLE:
+        return None
+    hashes = {}
+    for p in paths:
+        h = _dhash(p)
+        if h is not None:
+            hashes[p] = h
+    if len(hashes) < 2:
+        return None
+    return _avg_pair_similarity(list(hashes.keys()), hashes)
 
 
 def _find_cliques(members: list[Path], adjacency: dict[Path, set[Path]]) -> list[set[Path]]:
@@ -479,6 +501,16 @@ def extract_photo_metadata(path: Path) -> dict:
             if not exif:
                 return result
             tag_map = {TAGS.get(tag_id, tag_id): value for tag_id, value in exif.items()}
+            # DateTimeOriginal steht nicht im Haupt-IFD (das liefert
+            # exif.items() allein), sondern im Exif-SubIFD - ohne diesen
+            # Zusatzschritt bleibt das Aufnahmedatum bei den meisten echten
+            # Kamerafotos leer, obwohl es vorhanden ist (analog zum
+            # GPS-SubIFD-Zugriff weiter unten).
+            try:
+                exif_sub_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+                tag_map.update({TAGS.get(tag_id, tag_id): value for tag_id, value in exif_sub_ifd.items()})
+            except Exception:
+                pass
 
             date_str = tag_map.get("DateTimeOriginal") or tag_map.get("DateTime")
             if date_str:
@@ -591,7 +623,7 @@ def _unique_path(path: Path) -> Path:
 
 
 def move_to_duplicates_folder(files: list[Path], roots: list[Path],
-                               target_folder: Path | None = None) -> list[tuple[str, str]]:
+                               target_folder: Path | None = None) -> tuple[list[tuple[str, str]], list[str]]:
     """Verschiebt die gegebenen Dateien - die relative Ordnerstruktur
     innerhalb ihrer jeweiligen Quelle bleibt dabei erhalten (z.B. landet
     'Fotos/2020/bild.jpg' als 'Fotos/Duplikate/2020/bild.jpg' bzw. bei
@@ -603,23 +635,30 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
     - `target_folder=<Pfad>`: alle Dateien landen gemeinsam dort, unabhängig
       davon, aus welcher Quelle sie stammen.
 
-    Schreibt zusätzlich ein Log (LOG_FILE) für undo_last_move() und gibt die
-    Liste (alter Pfad, neuer Pfad) als Strings zurück.
+    Jede Datei wird einzeln versucht - schlägt eine fehl (z.B. Berechtigung,
+    Speicherplatz), werden die zuvor bereits erfolgreich verschobenen Dateien
+    trotzdem behalten/protokolliert, statt komplett verworfen zu werden.
+    Schreibt ein Log (LOG_FILE) für undo_last_move() und gibt
+    (erfolgreiche (alter Pfad, neuer Pfad)-Paare, Fehlermeldungen) zurück.
     """
     performed: list[tuple[str, str]] = []
+    errors: list[str] = []
     for f in files:
-        root = _find_root(f, roots)
-        rel = f.relative_to(root)
-        base = target_folder if target_folder is not None else (root / DUPLICATES_FOLDER_NAME)
-        target = base / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target = _unique_path(target)
-        shutil.move(str(f), str(target))
-        performed.append((str(f), str(target)))
+        try:
+            root = _find_root(f, roots)
+            rel = f.relative_to(root)
+            base = target_folder if target_folder is not None else (root / DUPLICATES_FOLDER_NAME)
+            target = base / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target = _unique_path(target)
+            shutil.move(str(f), str(target))
+            performed.append((str(f), str(target)))
+        except OSError as exc:
+            errors.append(f"{f.name}: {exc}")
 
     if performed:
         LOG_FILE.write_text(json.dumps(performed, ensure_ascii=False, indent=2))
-    return performed
+    return performed, errors
 
 
 def has_undo() -> bool:
@@ -629,13 +668,21 @@ def has_undo() -> bool:
 def undo_last_move() -> tuple[int, list[str]]:
     """Macht die zuletzt per move_to_duplicates_folder() ausgeführte Aktion
     rückgängig - verschiebt jede Datei von ihrem neuen zurück an ihren alten
-    Pfad. Gibt (Anzahl erfolgreich, Liste der Fehlermeldungen) zurück."""
+    Pfad. Gibt (Anzahl erfolgreich, Liste der Fehlermeldungen) zurück.
+
+    Schlägt einzelne Dateien fehl (z.B. Ursprungsordner inzwischen
+    schreibgeschützt), wird das Log NICHT komplett gelöscht, sondern nur um
+    die erfolgreich wiederhergestellten Einträge bereinigt - die
+    fehlgeschlagenen bleiben für einen erneuten Versuch erhalten, statt
+    ihre alter-Pfad/neuer-Pfad-Zuordnung unwiderruflich zu verlieren."""
     if not LOG_FILE.exists():
         return 0, []
     entries = json.loads(LOG_FILE.read_text())
     ok = 0
     errors: list[str] = []
-    for old, new in reversed(entries):
+    failed_indices: set[int] = set()
+    for i in range(len(entries) - 1, -1, -1):
+        old, new = entries[i]
         old_path, new_path = Path(old), Path(new)
         try:
             if not new_path.exists():
@@ -646,7 +693,12 @@ def undo_last_move() -> tuple[int, list[str]]:
             ok += 1
         except OSError as exc:
             errors.append(f"{new_path.name}: {exc}")
-    LOG_FILE.unlink(missing_ok=True)
+            failed_indices.add(i)
+
+    if failed_indices:
+        LOG_FILE.write_text(json.dumps([entries[i] for i in sorted(failed_indices)], ensure_ascii=False, indent=2))
+    else:
+        LOG_FILE.unlink(missing_ok=True)
     return ok, errors
 
 

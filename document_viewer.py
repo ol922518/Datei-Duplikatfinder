@@ -34,7 +34,7 @@ duplicate_engine.reverse_geocode()) - nie automatisch.
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
@@ -85,7 +85,7 @@ class DocumentViewer(QWidget):
         # z.B. "rechts unten" auch bei unterschiedlich großen Dateien
         # vergleichbar bleibt. Wird bei jedem manuellen Scrollen aktualisiert
         # (siehe _on_scroll_changed()) und beim Öffnen der nächsten Datei
-        # wiederhergestellt (siehe _restore_scroll_position()), damit sich
+        # wiederhergestellt (siehe _defer_scroll_restore()), damit sich
         # beim Vergleichen mehrerer Duplikate dieselbe Stelle im Blick
         # behalten lässt.
         self._scroll_fraction: tuple[float, float] = (0.0, 0.0)
@@ -273,8 +273,15 @@ class DocumentViewer(QWidget):
             return
         # Zoom-Zustand NICHT zurückgesetzt (siehe show_file()) - Ausgangswert
         # Custom/100% kommt bereits aus __init__.
-        self._restore_scroll_position(self.pdf_view)
         self._set_active_page(self.pdf_view)
+        # Verzögert (siehe _defer_scroll_restore()) statt direkt hier - die
+        # Scrollbar-Reichweite (horizontalScrollBar().maximum()/vertical...)
+        # wird von QPdfView erst asynchron aktualisiert, NACHDEM die neue
+        # Seite tatsächlich geladen/dargestellt ist. Eine sofortige
+        # Wiederherstellung würde noch die Reichweite der VORHERIGEN Datei
+        # lesen - genau das ließ "rechte untere Ecke" beim Dateiwechsel
+        # unzuverlässig wirken.
+        self._defer_scroll_restore(self.pdf_view)
 
     def _show_image_or_unsupported(self, path: Path) -> None:
         pixmap = QPixmap(str(path))
@@ -283,9 +290,11 @@ class DocumentViewer(QWidget):
             return
         self._current_pixmap = pixmap
         self._apply_scaled_pixmap()
-        self._restore_scroll_position(self.image_scroll)
         self._update_photo_meta_bar(engine.extract_photo_metadata(path))
         self._set_active_page(self.image_scroll)
+        # Verzögert (siehe _defer_scroll_restore()) statt direkt hier -
+        # dieselbe Begründung wie in _show_pdf().
+        self._defer_scroll_restore(self.image_scroll)
 
     @staticmethod
     def _format_place(lat: float, lon: float, cached: dict | None) -> str:
@@ -430,11 +439,18 @@ class DocumentViewer(QWidget):
         """Merkt sich die aktuelle Scroll-Position der gerade aktiven Bild-/
         PDF-Ansicht als Bruchteil (0.0..1.0) je Achse statt als Pixelwert -
         so bleibt z.B. "rechts unten" auch bei unterschiedlich großen
-        Dateien vergleichbar (siehe _restore_scroll_position())."""
-        current = self.stack.currentWidget()
-        if current is self.image_scroll:
+        Dateien vergleichbar (siehe _defer_scroll_restore()).
+
+        Ermittelt die Ansicht über self.sender() (welche Scrollbar hat das
+        Signal ausgelöst) statt über self.stack.currentWidget() - beim
+        Seitenwechsel wird sonst kurzzeitig noch die VORHERIGE Seite als
+        "aktuell" gelesen, obwohl schon die neue Scrollbar feuert (siehe
+        _defer_scroll_restore()), was den gemerkten Bruchteil mit falschen
+        Werten überschreiben könnte."""
+        sender = self.sender()
+        if sender in (self.image_scroll.horizontalScrollBar(), self.image_scroll.verticalScrollBar()):
             view = self.image_scroll
-        elif current is self.pdf_view:
+        elif sender in (self.pdf_view.horizontalScrollBar(), self.pdf_view.verticalScrollBar()):
             view = self.pdf_view
         else:
             return
@@ -444,16 +460,27 @@ class DocumentViewer(QWidget):
             vbar.value() / vbar.maximum() if vbar.maximum() else 0.0,
         )
 
-    def _restore_scroll_position(self, view) -> None:
+    def _defer_scroll_restore(self, view) -> None:
         """Stellt die zuletzt gemerkte relative Scroll-Position
-        (self._scroll_fraction) in der übergebenen Bild-/PDF-Ansicht
-        wieder her - aufgerufen beim Öffnen einer neuen Datei, damit eine
-        z.B. in die rechte untere Ecke gezoomte Stelle beim Wechsel
-        erhalten bleibt."""
-        hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+        (self._scroll_fraction) in der übergebenen Bild-/PDF-Ansicht wieder
+        her - verzögert per QTimer.singleShot(0, ...) statt sofort, weil
+        QScrollArea/QPdfView ihre Scrollbar-Reichweite (maximum()) erst
+        asynchron neu berechnen, NACHDEM Qt das durch das neue Bild/PDF
+        ausgelöste QEvent::LayoutRequest verarbeitet hat (das passiert erst
+        beim nächsten Durchlauf der Event-Loop, nicht sofort beim
+        Setzen des Pixmaps/Ladens der PDF-Seite). Eine sofortige
+        Wiederherstellung würde also noch mit der Reichweite der
+        VORHERIGEN Datei rechnen - das war die eigentliche Ursache dafür,
+        dass "an derselben Stelle bleiben" beim Dateiwechsel unzuverlässig
+        wirkte."""
         x_frac, y_frac = self._scroll_fraction
-        hbar.setValue(round(x_frac * hbar.maximum()))
-        vbar.setValue(round(y_frac * vbar.maximum()))
+
+        def restore() -> None:
+            hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+            hbar.setValue(round(x_frac * hbar.maximum()))
+            vbar.setValue(round(y_frac * vbar.maximum()))
+
+        QTimer.singleShot(0, restore)
 
     def _update_zoom_label(self) -> None:
         # Hinweis: QPdfView.zoomFactor() liefert im Modus "FitToWidth" nicht

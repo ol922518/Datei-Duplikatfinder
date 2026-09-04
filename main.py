@@ -17,7 +17,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QUrl, Qt, Signal
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -615,14 +615,33 @@ class DuplicateFinderApp(QWidget):
     # ------------------------------------------------------------------
     # Ergebnis-Tabelle
     # ------------------------------------------------------------------
-    def _rebuild_tree(self) -> None:
+    def _rebuild_tree(self, preserve_checks: bool = False) -> None:
+        """Baut den Ergebnisbaum aus self.groups neu auf. `preserve_checks`
+        (True nur bei _remove_paths_from_results()) übernimmt die zuvor
+        gesetzten Häkchen unveränderter Dateien statt sie auf den Standard
+        zurückzusetzen - sonst würde z.B. das Löschen einer markierten Datei
+        in Gruppe A auch ein bewusst abgewähltes Häkchen in der ganz
+        unbeteiligten Gruppe B stillschweigend wieder anhaken (die
+        Baum-Elemente werden bei jedem Neuaufbau komplett neu erzeugt, die
+        alten Checkbox-Widgets samt ihrem Zustand gehen sonst verloren)."""
+        previous_checks: dict[str, bool] = {}
+        if preserve_checks:
+            for child in self._iter_child_items():
+                path_str = child.data(COL_CHECK, Qt.UserRole)
+                checkbox = self.tree.itemWidget(child, COL_CHECK)
+                if path_str and checkbox is not None:
+                    previous_checks[path_str] = checkbox.isChecked()
+
         self.tree.blockSignals(True)
         self.tree.clear()
-        # Vorschau nur leeren, wenn die dort gezeigte Datei nicht mehr
-        # existiert (z.B. gerade verschoben/gelöscht) - bleibt sie erhalten,
-        # zeigt der Viewer sie nach dem Neuaufbau unverändert weiter an,
-        # statt bei jeder Aktion ins Leere zu springen.
-        if self._current_preview_path is None or not self._current_preview_path.exists():
+        # Ist der zuvor gemerkte Vorschau-Pfad nicht mehr gültig (Datei
+        # verschoben/gelöscht), auch das Tracking selbst zurücksetzen -
+        # sonst hält die App eine "Auswahl" fest, die im Viewer längst
+        # nicht mehr sichtbar ist (z.B. "📂 Ablageort öffnen" meldete dann
+        # fälschlich "existiert nicht mehr" statt "keine Auswahl").
+        if self._current_preview_path is not None and not self._current_preview_path.exists():
+            self._current_preview_path = None
+        if self._current_preview_path is None:
             self.viewer.clear()
 
         exact_i = 0
@@ -686,7 +705,11 @@ class DuplicateFinderApp(QWidget):
                 # dem Verbinden von toggled(), damit der Aufbau selbst kein
                 # Signal auslöst.
                 checkbox = QCheckBox()
-                checkbox.setChecked(not is_original)
+                path_str = str(entry.path)
+                if path_str in previous_checks:
+                    checkbox.setChecked(previous_checks[path_str])
+                else:
+                    checkbox.setChecked(not is_original)
                 checkbox.toggled.connect(self._update_move_button)
                 self.tree.setItemWidget(child, COL_CHECK, checkbox)
 
@@ -768,14 +791,19 @@ class DuplicateFinderApp(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        try:
-            performed = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
-        except OSError as exc:
-            QMessageBox.warning(self, "Fehler beim Verschieben", str(exc))
-            performed = []
+        # move_to_duplicates_folder() versucht jede Datei einzeln - eine
+        # fehlgeschlagene Datei verwirft nicht mehr die bereits erfolgreich
+        # verschobenen (die bleiben protokolliert/nachvollziehbar).
+        performed, errors = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
 
         self._update_undo_button()
-        self.status_label.setText(f"{len(performed)} Datei(en) verschoben.")
+        if errors:
+            QMessageBox.warning(
+                self, "Teilweise erfolgreich",
+                f"{len(performed)} von {len(paths)} Datei(en) verschoben, {len(errors)} Fehler:\n" + "\n".join(errors),
+            )
+        else:
+            self.status_label.setText(f"{len(performed)} Datei(en) verschoben.")
         # Nur die tatsächlich verschobenen Dateien aus den Gruppen entfernen,
         # statt den ganzen Scan zu verwerfen - der Rest der Ergebnisse (und
         # die Vorschau, falls nicht betroffen) bleibt so erhalten.
@@ -851,9 +879,19 @@ class DuplicateFinderApp(QWidget):
         for group in self.groups:
             remaining = [f for f in group.files if f.path not in removed_paths]
             if len(remaining) >= 2:
-                new_groups.append(engine.DuplicateGroup(files=remaining, kind=group.kind, similarity=group.similarity))
+                similarity = group.similarity
+                # Bei geschrumpften "Ähnliche Bilder"-Gruppen den Wert neu
+                # berechnen - der für die ursprüngliche (größere) Gruppe
+                # ermittelte Durchschnitt passt sonst nicht mehr zu den
+                # verbleibenden Dateien.
+                if group.kind == "similar" and len(remaining) != len(group.files):
+                    similarity = engine.recompute_similarity([f.path for f in remaining])
+                new_groups.append(engine.DuplicateGroup(files=remaining, kind=group.kind, similarity=similarity))
         self.groups = new_groups
-        self._rebuild_tree()
+        # preserve_checks=True: nur die betroffene(n) Datei(en) verschwinden,
+        # Häkchen in unbeteiligten Gruppen bleiben unverändert (siehe
+        # _rebuild_tree()).
+        self._rebuild_tree(preserve_checks=True)
 
 
 def _format_mtime(timestamp: float) -> str:

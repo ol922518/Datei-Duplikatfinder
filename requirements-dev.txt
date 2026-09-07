@@ -1,0 +1,4 @@
+# Nur zum Entwickeln/Testen nötig, nicht zum Ausführen der App - siehe
+# tests/ und README.md ("Tests ausführen").
+-r requirements.txt
+pytest>=8.0.0

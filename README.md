@@ -152,3 +152,19 @@ verglichen (keine doppelten Gruppen).
 - `duplicate_engine.py` – Scan-/Hash-/Verschiebe-Logik, unabhängig von der Oberfläche
 - UI-Bausteine (`TitledFrame`, `InfoIcon`, …) kommen aus dem geteilten [`qt-app-kit`](../qt-app-kit)-Paket (Geschwister-Ordner, siehe „Starten“)
 - `document_viewer.py` – Datei-Viewer (identisch zum Datei-Umbenenner)
+- `tests/` – automatisierte Tests für `duplicate_engine.py` (siehe unten)
+
+## Tests ausführen
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Deckt bisher gezielt `duplicate_engine.py` ab (Verschieben/Rückgängig
+machen, Ordner einlesen, exakter Duplikat-Vergleich, Ähnliche-Bilder-
+Erkennung inkl. Hash-Cache) - die Oberfläche (`main.py`) hat noch keine
+automatisierten Tests. Jeder Test isoliert sich selbst über einen
+temporären Ordner (`tmp_path`) sowie ein umgeleitetes `LOG_FILE`, greift
+also nicht in eine parallel laufende App oder deren echte
+Verschiebe-Historie ein (siehe `tests/conftest.py`).

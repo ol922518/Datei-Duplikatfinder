@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+# Kein Paket/setup.py vorhanden (main.py/duplicate_engine.py sind
+# Top-Level-Module, siehe requirements.txt/README) - pythonpath sorgt
+# dafür, dass "import duplicate_engine" trotzdem funktioniert, ohne
+# extra conftest.py-sys.path-Hack.
+pythonpath = ["."]
+testpaths = ["tests"]

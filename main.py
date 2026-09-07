@@ -110,6 +110,30 @@ class DropZone(QFrame):
             self._on_click()
 
 
+# Dieselbe Datei, in die "Datei-Duplikatfinder.app"/"App öffnen.command"
+# bereits Fehler beim Start umleiten (siehe Launcher-Skript im
+# App-Bundle) - unabhängig davon, wie main.py gerade gestartet wurde
+# (Bundle, .command-Skript oder direkt "python3 main.py"), landet ein
+# unerwarteter Scan-Fehler damit immer an derselben, bekannten Stelle.
+CRASH_LOG_FILE = Path(__file__).resolve().parent / ".app_launch.log"
+
+
+def _log_unexpected_error(exc: Exception) -> None:
+    """Hängt einen vollständigen Traceback an CRASH_LOG_FILE an - siehe
+    ScanWorker.run(). Schlägt auch das fehl (z.B. Ordner nicht
+    schreibbar), bleibt nur die (deutlich knappere) Dialogmeldung übrig,
+    kein weiterer Absturz."""
+    import traceback
+    from datetime import datetime
+
+    try:
+        with CRASH_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(f"\n--- {datetime.now().isoformat(timespec='seconds')} ---\n")
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except OSError:
+        pass
+
+
 class ScanWorker(QThread):
     """Führt die Duplikat-Suche in einem Hintergrund-Thread aus, damit die
     Oberfläche bei großen Ordnern nicht einfriert. Erst exakte Duplikate
@@ -121,7 +145,9 @@ class ScanWorker(QThread):
 
     progress = Signal(int, int, str)
     finished_ok = Signal(list)
-    failed = Signal(str)
+    # (Meldung, unerwartet) - unerwartet=True bei jedem Fehler außer OSError
+    # (siehe run()), main.py zeigt dafür eine andere Dialog-Variante.
+    failed = Signal(str, bool)
 
     def __init__(self, sources: list[Path], recursive: bool, find_similar: bool,
                  target_folder: Path | None, parent=None):
@@ -158,7 +184,20 @@ class ScanWorker(QThread):
                 )
                 groups += similar_groups
         except OSError as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(str(exc), False)
+            return
+        except Exception as exc:
+            # Jeder andere Fehlertyp (z.B. ein Programmierfehler) wurde bisher
+            # gar nicht abgefangen - der Hintergrund-Thread starb lautlos,
+            # die Oberfläche bemerkte das nie (Button blieb dauerhaft
+            # deaktiviert, Fortschrittsbalken blieb stehen, keinerlei
+            # Fehlermeldung - siehe Bug-Report 07.09.2026, dort war die
+            # eigentliche Ursache zwar keine Exception, sondern eine sehr
+            # langsame Schleife, aber die Frage "würde ich einen echten
+            # Fehler überhaupt bemerken" war berechtigt - jetzt ja).
+            # Vollständiger Traceback zusätzlich protokolliert.
+            _log_unexpected_error(exc)
+            self.failed.emit(f"{type(exc).__name__}: {exc}", True)
             return
         self.finished_ok.emit(groups)
 
@@ -623,14 +662,24 @@ class DuplicateFinderApp(QWidget):
                 )
             )
 
-    def _on_scan_failed(self, message: str) -> None:
+    def _on_scan_failed(self, message: str, unexpected: bool) -> None:
         self._worker = None
         self.scan_button.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.status_label.setText(t("main_scan_failed_status"))
-        QMessageBox.warning(
-            self, t("main_no_access_title"), t("main_no_access_text").format(message=message),
-        )
+        if unexpected:
+            # Jeder Fehler außer OSError (siehe ScanWorker.run()) - bisher
+            # gab es dafür GAR KEINE Rückmeldung, der Scan-Button blieb
+            # einfach dauerhaft deaktiviert, ohne dass die Oberfläche
+            # erkennen ließ, ob noch gerechnet wird oder etwas schiefging.
+            QMessageBox.critical(
+                self, t("main_unexpected_error_title"),
+                t("main_unexpected_error_text").format(message=message),
+            )
+        else:
+            QMessageBox.warning(
+                self, t("main_no_access_title"), t("main_no_access_text").format(message=message),
+            )
 
     # ------------------------------------------------------------------
     # Ergebnis-Tabelle
@@ -661,6 +710,12 @@ class DuplicateFinderApp(QWidget):
                     previous_checks[path_str] = (checkbox.isChecked(), was_original)
 
         self.tree.blockSignals(True)
+        # Verhindert, dass Qt bei jedem einzelnen addTopLevelItem() unten
+        # sofort neu zeichnet/layoutet (siehe Kommentar bei
+        # self.tree.addTopLevelItems() weiter unten - der eigentliche Fix
+        # ist das gebündelte Einfügen, dies hier nur zusätzliche
+        # Absicherung).
+        self.tree.setUpdatesEnabled(False)
         self.tree.clear()
         # Ist der zuvor gemerkte Vorschau-Pfad nicht mehr gültig (Datei
         # verschoben/gelöscht), auch das Tracking selbst zurücksetzen -
@@ -671,6 +726,25 @@ class DuplicateFinderApp(QWidget):
             self._current_preview_path = None
         if self._current_preview_path is None:
             self.viewer.clear()
+
+        # Alle Zeilen werden zunächst nur als Python-Objekte gesammelt
+        # (all_items) und ERST GANZ AM ENDE in einem einzigen Aufruf
+        # eingefügt (siehe addTopLevelItems() unten) - nicht sofort per
+        # addTopLevelItem() in dieser Schleife. Grund (Bug-Report
+        # 07.09.2026, per Live-Stack-Sample bestätigt): jeder einzelne
+        # addTopLevelItem()-Aufruf löst in Qt eine komplette Neuberechnung
+        # des gesamten Baum-Layouts aus (inkl. Text-Shaping aller
+        # sichtbaren Zeilen, sichtbar im Profil als
+        # QTreeView::updateGeometries() -> QTextEngine::shapeText()) - bei
+        # wenigen hundert Zeilen unmerklich, bei mehreren tausend (z.B.
+        # 1695 gescannte Dateien) ein mehrminütiges Einfrieren der
+        # Oberfläche OHNE Fehlermeldung, da rein rechnerisch, nicht
+        # abgestürzt. Checkbox-Widgets (brauchen eine bereits im Baum
+        # hängende Zeile) werden deshalb ebenfalls erst in einem zweiten
+        # Durchlauf NACH dem Batch-Insert gesetzt.
+        all_items: list[QTreeWidgetItem] = []
+        group_items: list[QTreeWidgetItem] = []
+        pending_checkboxes: list[tuple[QTreeWidgetItem, bool, str]] = []
 
         exact_i = 0
         similar_i = 0
@@ -697,8 +771,8 @@ class DuplicateFinderApp(QWidget):
             bold = QFont()
             bold.setBold(True)
             group_item.setFont(0, bold)
-            self.tree.addTopLevelItem(group_item)
-            group_item.setFirstColumnSpanned(True)
+            all_items.append(group_item)
+            group_items.append(group_item)
 
             for idx, entry in enumerate(group.files):
                 is_original = idx == 0  # Index 0 = Original-Vorschlag (siehe DuplicateGroup-Sortierkonvention)
@@ -723,33 +797,45 @@ class DuplicateFinderApp(QWidget):
                 # reproduzierbar per Pixelvergleich, unabhängig von Stil/
                 # Palette). Als Geschwister-Element klappt es einwandfrei.
                 # setRootIsDecorated(False) blendet dafür die (bei echten
-                # Kindern übliche) Einrückung/den Pfeil aus, die fette
+                # Kindern üblichen) Einrückung/den Pfeil aus, die fette
                 # Gruppenzeile bleibt trotzdem als optische Trennung sichtbar.
-                self.tree.addTopLevelItem(child)
+                # Einfügen ins Baum-Widget selbst passiert gebündelt weiter
+                # unten (siehe addTopLevelItems()), hier nur sammeln.
+                all_items.append(child)
+                pending_checkboxes.append((child, is_original, str(entry.path)))
 
-                # Echtes QCheckBox-Widget statt der eingebauten Baum-Häkchen
-                # (Qt.ItemIsUserCheckable/setCheckState) - die werden von
-                # QTreeWidget unter dem hier nötigen Fusion-Stil (siehe
-                # _dark_fusion_palette) nachweislich nicht sichtbar
-                # gezeichnet (bei QTableWidget tritt derselbe Fehler nicht
-                # auf - per Pixelvergleich verifiziert). Muss NACH dem
-                # Einfügen ins Baum-Widget gesetzt werden. setChecked() vor
-                # dem Verbinden von toggled(), damit der Aufbau selbst kein
-                # Signal auslöst.
-                checkbox = QCheckBox()
-                path_str = str(entry.path)
-                prev = previous_checks.get(path_str)
-                if prev is not None and prev[1] == is_original:
-                    checkbox.setChecked(prev[0])
-                else:
-                    # Kein vorheriger Zustand bekannt, oder die Rolle
-                    # (Original/Duplikat) hat sich seit dem letzten Aufbau
-                    # geändert - dann gilt der rollenabhängige Standard,
-                    # nicht das alte Häkchen (siehe Docstring oben).
-                    checkbox.setChecked(not is_original)
-                checkbox.toggled.connect(self._update_move_button)
-                self.tree.setItemWidget(child, COL_CHECK, checkbox)
+        # Einziger Einfüge-Aufruf für den gesamten Baum (Gruppenzeilen +
+        # Dateizeilen zusammen) statt eines addTopLevelItem()-Aufrufs pro
+        # Zeile - siehe Kommentar oben, das ist der eigentliche Performance-
+        # Fix.
+        self.tree.addTopLevelItems(all_items)
+        for group_item in group_items:
+            group_item.setFirstColumnSpanned(True)
 
+        # Echtes QCheckBox-Widget statt der eingebauten Baum-Häkchen
+        # (Qt.ItemIsUserCheckable/setCheckState) - die werden von
+        # QTreeWidget unter dem hier nötigen Fusion-Stil (siehe
+        # _dark_fusion_palette) nachweislich nicht sichtbar gezeichnet (bei
+        # QTableWidget tritt derselbe Fehler nicht auf - per Pixelvergleich
+        # verifiziert). Muss NACH dem Einfügen ins Baum-Widget gesetzt
+        # werden (siehe addTopLevelItems() oben). setChecked() vor dem
+        # Verbinden von toggled(), damit der Aufbau selbst kein Signal
+        # auslöst.
+        for child, is_original, path_str in pending_checkboxes:
+            checkbox = QCheckBox()
+            prev = previous_checks.get(path_str)
+            if prev is not None and prev[1] == is_original:
+                checkbox.setChecked(prev[0])
+            else:
+                # Kein vorheriger Zustand bekannt, oder die Rolle
+                # (Original/Duplikat) hat sich seit dem letzten Aufbau
+                # geändert - dann gilt der rollenabhängige Standard, nicht
+                # das alte Häkchen (siehe Docstring oben).
+                checkbox.setChecked(not is_original)
+            checkbox.toggled.connect(self._update_move_button)
+            self.tree.setItemWidget(child, COL_CHECK, checkbox)
+
+        self.tree.setUpdatesEnabled(True)
         self.tree.blockSignals(False)
         self._update_move_button()
 

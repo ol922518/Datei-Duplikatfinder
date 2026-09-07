@@ -390,6 +390,19 @@ TEXTS: Texts = {
             "Full Disk Access):\n\n{message}"
         ),
     },
+    "main_unexpected_error_title": {"de": "Unerwarteter Fehler", "en": "Unexpected error"},
+    "main_unexpected_error_text": {
+        "de": (
+            "Beim Scannen ist ein unerwarteter Fehler aufgetreten:\n\n{message}\n\n"
+            "Der vollständige technische Fehlerbericht wurde zusätzlich in "
+            "'.app_launch.log' im Projektordner gespeichert."
+        ),
+        "en": (
+            "An unexpected error occurred while scanning:\n\n{message}\n\n"
+            "The full technical error report was additionally saved to "
+            "'.app_launch.log' in the project folder."
+        ),
+    },
 
     # -- main.py: Ergebnis-Baum (Gruppen-Label/Badges) ------------------------
     "main_similar_group_label": {"de": "🖼️ Ähnliche Bilder {index} — {count} Dateien", "en": "🖼️ Similar images {index} — {count} files"},

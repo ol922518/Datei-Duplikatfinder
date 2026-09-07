@@ -41,6 +41,10 @@ im jeweiligen Skript/Bundle anzupassen):
 
 ## Funktionsweise
 
+Oben rechts, außerhalb des scrollbaren Bereichs: **„🌐 DE/EN“** wechselt die
+Sprache der gesamten Oberfläche - wirkt erst nach einem Neustart der App
+(Wahl wird in `app_settings.json` gespeichert, wie der Standardordner).
+
 1. **Quellordner auswählen** – *Drop-Zone*: Ordner (oder einzelne Dateien)
    hineinziehen, auch mehrere auf einmal, oder klicken für den klassischen
    Ordner-Auswahldialog. Rechts daneben, übereinander gestapelt: **„↺“**
@@ -161,8 +165,9 @@ verglichen (keine doppelten Gruppen).
 
 - `main.py` – Oberfläche (PySide6)
 - `duplicate_engine.py` – Scan-/Hash-/Verschiebe-Logik, unabhängig von der Oberfläche
-- UI-Bausteine (`TitledFrame`, `InfoIcon`, …) kommen aus dem geteilten [`qt-app-kit`](../qt-app-kit)-Paket (Geschwister-Ordner, siehe „Starten“)
 - `document_viewer.py` – Datei-Viewer (identisch zum Datei-Umbenenner)
+- `translations.py` – Deutsch/Englisch-Texte der Oberfläche (`TEXTS`-Wörterbuch, vollständig migriert 07.09.2026); der Mechanismus selbst (`t()`/`set_language()`) liegt geteilt mit dem [file_renamer](../file_renamer) in `qt_app_kit.i18n`
+- UI-Bausteine (`TitledFrame`, `InfoIcon`, …) sowie `file_ops.py`/`result_dialogs.py`/`i18n.py` kommen aus dem geteilten [`qt-app-kit`](../qt-app-kit)-Paket (Geschwister-Ordner, siehe „Starten“)
 - `tests/` – automatisierte Tests für `duplicate_engine.py` (siehe unten)
 
 ## Tests ausführen

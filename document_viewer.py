@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
+from qt_app_kit.i18n import t
 
 try:
     import docx  # python-docx - Verfügbarkeit über engine.HAS_DOCX geprüft
@@ -96,7 +97,7 @@ class DocumentViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.title_label = QLabel("Vorschau")
+        self.title_label = QLabel(t("viewer_title_default"))
         self.title_label.setStyleSheet("font-weight: bold;")
         self.title_label.setWordWrap(True)
         layout.addWidget(self.title_label)
@@ -108,7 +109,7 @@ class DocumentViewer(QWidget):
         zoom_layout.setContentsMargins(0, 0, 0, 4)
         zoom_out_btn = QPushButton("➖")
         zoom_out_btn.setFixedWidth(32)
-        zoom_out_btn.setToolTip("Verkleinert die Vorschau.")
+        zoom_out_btn.setToolTip(t("viewer_zoom_out_tooltip"))
         zoom_out_btn.clicked.connect(self._zoom_out)
         zoom_layout.addWidget(zoom_out_btn)
         self.zoom_label = QLabel("100%")
@@ -117,11 +118,11 @@ class DocumentViewer(QWidget):
         zoom_layout.addWidget(self.zoom_label)
         zoom_in_btn = QPushButton("➕")
         zoom_in_btn.setFixedWidth(32)
-        zoom_in_btn.setToolTip("Vergrößert die Vorschau.")
+        zoom_in_btn.setToolTip(t("viewer_zoom_in_tooltip"))
         zoom_in_btn.clicked.connect(self._zoom_in)
         zoom_layout.addWidget(zoom_in_btn)
-        zoom_fit_btn = QPushButton("↺ Einpassen")
-        zoom_fit_btn.setToolTip("Setzt den Zoom zurück, sodass die Vorschau wieder in den verfügbaren Platz passt.")
+        zoom_fit_btn = QPushButton(t("viewer_zoom_fit_button"))
+        zoom_fit_btn.setToolTip(t("viewer_zoom_fit_tooltip"))
         zoom_fit_btn.clicked.connect(self._zoom_fit)
         zoom_layout.addWidget(zoom_fit_btn)
         zoom_layout.addStretch(1)
@@ -136,13 +137,8 @@ class DocumentViewer(QWidget):
         self.photo_meta_label.setWordWrap(True)
         self.photo_meta_label.setStyleSheet("color: palette(mid);")
         photo_meta_layout.addWidget(self.photo_meta_label, 1)
-        self.geocode_btn = QPushButton("🌐 Ort ermitteln")
-        self.geocode_btn.setToolTip(
-            "Fragt den Ortsnamen zu den GPS-Koordinaten dieses Fotos online bei "
-            "OpenStreetMap ab (einzige Stelle in der App, die dafür Internet braucht - "
-            "geschieht nur auf diesen Klick hin, nie automatisch). Danach über 'Vorschau "
-            "aktualisieren' als Baustein {ort} nutzbar."
-        )
+        self.geocode_btn = QPushButton(t("viewer_geocode_button"))
+        self.geocode_btn.setToolTip(t("viewer_geocode_tooltip"))
         self.geocode_btn.clicked.connect(self._on_geocode_clicked)
         photo_meta_layout.addWidget(self.geocode_btn)
         self.photo_meta_bar.setVisible(False)
@@ -152,7 +148,7 @@ class DocumentViewer(QWidget):
         layout.addWidget(self.stack, 1)
 
         # Leer-Seite: solange (noch) nichts ausgewählt ist.
-        self.empty_page = QLabel("Zeile in der Tabelle auswählen, um eine Vorschau zu sehen.")
+        self.empty_page = QLabel(t("viewer_empty_hint"))
         self.empty_page.setAlignment(Qt.AlignCenter)
         self.empty_page.setWordWrap(True)
         self.empty_page.setStyleSheet("color: palette(mid);")
@@ -217,7 +213,7 @@ class DocumentViewer(QWidget):
         return super().eventFilter(obj, event)
 
     def clear(self) -> None:
-        self.title_label.setText("Vorschau")
+        self.title_label.setText(t("viewer_title_default"))
         self._current_pixmap = None
         self._update_photo_meta_bar(None)
         self._set_active_page(self.empty_page)
@@ -235,7 +231,7 @@ class DocumentViewer(QWidget):
         self._update_photo_meta_bar(None)
 
         if not path.exists():
-            self._show_message(f"Datei nicht gefunden:\n{path.name}")
+            self._show_message(t("viewer_file_not_found").format(name=path.name))
             return
 
         ext = path.suffix.lower()
@@ -269,7 +265,7 @@ class DocumentViewer(QWidget):
         # wirkungslos), erfolgreich ist genau Error.None_.
         error = self.pdf_document.load(str(path))
         if error != QPdfDocument.Error.None_:
-            self._show_message(f"PDF konnte nicht geöffnet werden:\n{path.name}")
+            self._show_message(t("viewer_pdf_open_failed").format(name=path.name))
             return
         # Zoom-Zustand NICHT zurückgesetzt (siehe show_file()) - Ausgangswert
         # Custom/100% kommt bereits aus __init__.
@@ -286,7 +282,7 @@ class DocumentViewer(QWidget):
     def _show_image_or_unsupported(self, path: Path) -> None:
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
-            self._show_message(f"Keine Vorschau verfügbar für:\n{path.name}")
+            self._show_message(t("viewer_no_preview").format(name=path.name))
             return
         self._current_pixmap = pixmap
         self._apply_scaled_pixmap()
@@ -331,7 +327,7 @@ class DocumentViewer(QWidget):
         self.photo_meta_label.setText("   ".join(parts))
         self.geocode_btn.setVisible(self._current_photo_gps is not None)
         self.geocode_btn.setEnabled(True)
-        self.geocode_btn.setText("🌐 Ort ermitteln")
+        self.geocode_btn.setText(t("viewer_geocode_button"))
         self.photo_meta_bar.setVisible(True)
 
     def _on_geocode_clicked(self) -> None:
@@ -339,7 +335,7 @@ class DocumentViewer(QWidget):
             return
         lat, lon = self._current_photo_gps
         self.geocode_btn.setEnabled(False)
-        self.geocode_btn.setText("Suche…")
+        self.geocode_btn.setText(t("viewer_geocode_searching"))
         # Sorgt dafür, dass der deaktivierte Button/Text vor dem (kurz
         # blockierenden) Netzwerkaufruf gleich sichtbar wird.
         QApplication.processEvents()
@@ -349,14 +345,14 @@ class DocumentViewer(QWidget):
         # Abfrage, die für diese Koordinate nur nichts gefunden hat - beides
         # braucht eine unterschiedliche Rückmeldung.
         if result is None:
-            self.geocode_btn.setText("⚠ Kein Internet?")
+            self.geocode_btn.setText(t("viewer_geocode_no_internet"))
         elif result.get("ort") or result.get("land"):
             self.photo_meta_label.setText(
                 self.photo_meta_label.text().rsplit("📍", 1)[0] + self._format_place(lat, lon, result)
             )
-            self.geocode_btn.setText("🌐 Ort ermitteln")
+            self.geocode_btn.setText(t("viewer_geocode_button"))
         else:
-            self.geocode_btn.setText("⚠ Kein Ort gefunden")
+            self.geocode_btn.setText(t("viewer_geocode_not_found"))
         self.geocode_btn.setEnabled(True)
 
     def _current_image_zoom(self) -> float:
@@ -382,7 +378,7 @@ class DocumentViewer(QWidget):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
-            self._show_message(f"Datei konnte nicht gelesen werden:\n{e}")
+            self._show_message(t("viewer_read_failed").format(error=e))
             return
         if markdown:
             self.text_view.setMarkdown(text)
@@ -392,17 +388,15 @@ class DocumentViewer(QWidget):
 
     def _show_docx(self, path: Path) -> None:
         if not engine.HAS_DOCX:
-            self._show_message(
-                "Keine Vorschau möglich: Paket 'python-docx' ist nicht installiert."
-            )
+            self._show_message(t("viewer_docx_missing_package"))
             return
         try:
             document = docx.Document(str(path))
             text = "\n\n".join(p.text for p in document.paragraphs if p.text.strip())
         except Exception as e:
-            self._show_message(f"Word-Datei konnte nicht gelesen werden:\n{e}")
+            self._show_message(t("viewer_docx_read_failed").format(error=e))
             return
-        self.text_view.setPlainText(text or "(leeres Dokument)")
+        self.text_view.setPlainText(text or t("viewer_docx_empty"))
         self._set_active_page(self.text_view)
 
     # ------------------------------------------------------------------
@@ -505,12 +499,12 @@ class DocumentViewer(QWidget):
         current = self.stack.currentWidget()
         if current is self.image_scroll and self._current_pixmap is not None:
             if self._image_zoom is None:
-                self.zoom_label.setText("Auto")
+                self.zoom_label.setText(t("viewer_zoom_auto"))
             else:
                 self.zoom_label.setText(f"{round(self._image_zoom * 100)}%")
         elif current is self.pdf_view:
             if self.pdf_view.zoomMode() == QPdfView.ZoomMode.FitToWidth:
-                self.zoom_label.setText("Auto")
+                self.zoom_label.setText(t("viewer_zoom_auto"))
             else:
                 self.zoom_label.setText(f"{round(self.pdf_view.zoomFactor() * 100)}%")
         else:

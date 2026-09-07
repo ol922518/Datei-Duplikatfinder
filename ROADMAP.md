@@ -31,24 +31,6 @@ Aktuell lässt sich nur ein einzelner Ordner als fester Standard
 speichern (wie beim Datei-Umbenenner) - später evtl. eine Liste
 mehrerer fester Quellen.
 
-## Sprachumschaltung Deutsch/Englisch
-
-Alle Texte (Buttons, Tooltips, Hilfetexte, Meldungen) auch auf Englisch,
-mit Umschalter für den Nutzer. Technisch gut machbar, aber aufwändig, da
-aktuell jeder Text fest im Code steht - am ehesten über ein einfaches
-eigenes Wörterbuch (`translations.py` mit `t("schlüssel")`-Funktion
-statt Qt-eigener `.ts`/`.qm`-Infrastruktur, die zusätzliches Werkzeug
-bräuchte). Sprachwechsel würde vermutlich erst nach Neustart greifen
-(wie der Standardordner gespeichert), da alle Texte live neu zu setzen
-deutlich aufwändiger wäre.
-
-Der [file_renamer](../file_renamer) steht vor demselben Bedarf (dort
-bereits mit Architektur-Entscheidung und Grundgerüst-Plan in dessen
-eigener ROADMAP.md) - da beide Projekte dieselbe Qt-Basis
-([qt-app-kit](../qt-app-kit)) teilen, könnte der eigentliche
-Übersetzungs-Mechanismus (nicht die Texte selbst) als gemeinsames,
-wiederverwendbares Stück gebaut werden.
-
 ## O(n²)-Grenze bei „Ähnliche Bilder“ (nur bei sehr großen Sammlungen relevant)
 
 Der paarweise Ähnlichkeitsvergleich in `scan_for_similar_images()`

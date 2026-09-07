@@ -40,45 +40,31 @@ from PySide6.QtWidgets import (
 )
 
 import duplicate_engine as engine
+import translations
 from document_viewer import DocumentViewer
+from qt_app_kit.i18n import get_language, set_language, t
 from qt_app_kit.qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, TwoColumnFrame, flow_row
 from qt_app_kit.result_dialogs import show_partial_result
 
-RECURSIVE_HELP = (
-    "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
-    "abschalten, um wirklich nur die Dateien direkt im gewählten Ordner zu "
-    "vergleichen (ohne dessen Unterordner)."
-)
 
-COMPARE_HELP = (
-    "Zwei Dateien gelten als Duplikat, wenn sie exakt denselben Inhalt haben - "
-    "geprüft über Dateigröße und einen SHA-256-Prüfsummen-Vergleich (nicht über "
-    "den Dateinamen: 'Foto.jpg' und 'IMG_0231.jpg' mit identischem Inhalt werden "
-    "erkannt). Innerhalb jeder Gruppe gilt die älteste Datei als Vorschlag fürs "
-    "Original (Häkchen davor deshalb standardmäßig leer) - das lässt sich pro "
-    "Datei per Häkchen anpassen."
-)
+# Als Funktionen statt Modul-Konstanten, da sie übersetzten Text enthalten
+# (t()) - zum Zeitpunkt des Modul-Imports ist die Sprache
+# (translations.init(), siehe __main__ unten) noch nicht gesetzt.
+def _recursive_help() -> str:
+    return t("main_recursive_help")
 
-TARGET_FOLDER_HELP = (
-    "Standardmäßig landet jede verschobene Datei im 'Duplikate'-Unterordner "
-    "ihrer jeweiligen Quelle (Ordnerstruktur bleibt dabei erhalten). Über "
-    "'Ändern…' lässt sich stattdessen ein einziger, zentraler Zielordner "
-    "festlegen, in den dann alle verschobenen Duplikate wandern - egal aus "
-    "welcher Quelle sie stammen. Die Einstellung wird gemerkt (auch über "
-    "einen Neustart hinweg) und gilt für alle künftigen 'Verschieben'-"
-    "Aktionen, bis sie über '↺ Standard' wieder zurückgesetzt wird."
-)
 
-SIMILAR_HELP = (
-    "Findet zusätzlich Bilder, die sich zwar leicht unterscheiden (andere "
-    "Auflösung, erneut komprimiert, minimal bearbeitet), aber ganz ähnlich "
-    "aussehen - über einen Bildvergleich (Perceptual Hashing), nicht über "
-    "exakte Prüfsummen. Kann daher auch mal Bilder als 'ähnlich' einstufen, "
-    "die bei genauerem Hinsehen doch unterschiedlich sind - vor dem "
-    "Verschieben bitte prüfen. Innerhalb jeder Gruppe gilt die größte Datei "
-    "als Vorschlag (vermutlich beste Qualität). Braucht das Paket 'Pillow' "
-    "(siehe requirements.txt) - ohne das Paket bleibt die Option wirkungslos."
-)
+def _compare_help() -> str:
+    return t("main_compare_help")
+
+
+def _target_folder_help() -> str:
+    return t("main_target_folder_help")
+
+
+def _similar_help() -> str:
+    return t("main_similar_help")
+
 
 COL_CHECK, COL_NAME, COL_FOLDER, COL_SIZE, COL_MODIFIED = range(5)
 
@@ -88,8 +74,6 @@ class DropZone(QFrame):
     öffnet alternativ den klassischen Ordner-Auswahldialog. Zeigt normalerweise
     einen Hinweistext an, nach Auswahl stattdessen eine Zusammenfassung der
     geladenen Quelle(n) (siehe set_summary)."""
-
-    DEFAULT_TEXT = "📂 Ordner (oder Dateien) hierher ziehen  –  oder hier klicken zum Auswählen"
 
     def __init__(self, on_drop, on_click, parent=None):
         super().__init__(parent)
@@ -104,13 +88,13 @@ class DropZone(QFrame):
         )
 
         layout = QVBoxLayout(self)
-        self.label = QLabel(self.DEFAULT_TEXT)
+        self.label = QLabel(t("main_dropzone_default_text"))
         self.label.setWordWrap(True)
         self.label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.label)
 
     def set_summary(self, text: str | None) -> None:
-        self.label.setText(text if text else self.DEFAULT_TEXT)
+        self.label.setText(text if text else t("main_dropzone_default_text"))
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -182,7 +166,7 @@ class ScanWorker(QThread):
 class DuplicateFinderApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Datei-Duplikatfinder")
+        self.setWindowTitle(t("main_window_title"))
         self.resize(900, 760)
         self.setMinimumSize(360, 300)
 
@@ -207,6 +191,22 @@ class DuplicateFinderApp(QWidget):
     def _build_ui(self):
         outer = QVBoxLayout(self)
 
+        # --- Sprachumschalter (oben rechts, außerhalb des scrollbaren
+        # Bereichs) - wirkt erst nach einem Neustart, siehe
+        # _on_language_switch_clicked() und ROADMAP.md "Sprachumschaltung
+        # Deutsch/Englisch". Bewusst eine eigene QHBoxLayout-Zeile statt
+        # flow_row() - FlowLayout (siehe qt_widgets.py) kennt kein
+        # addStretch(), das für die Rechtsbündigkeit hier gebraucht wird.
+        language_row = QWidget()
+        language_row_layout = QHBoxLayout(language_row)
+        language_row_layout.setContentsMargins(0, 0, 0, 0)
+        language_row_layout.addStretch(1)
+        language_btn = QPushButton(t("language_switch_button"))
+        language_btn.setToolTip(t("language_switch_tooltip"))
+        language_btn.clicked.connect(self._on_language_switch_clicked)
+        language_row_layout.addWidget(language_btn)
+        outer.addWidget(language_row)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -227,25 +227,19 @@ class DuplicateFinderApp(QWidget):
         # Reihe 2 (Ergebnis): volle Breite, wächst mit der Fensterhöhe.
         self._build_result_section(body)
 
-        hint = QLabel(
-            "Tipp: Häkchen markiert eine Datei zum Verschieben - je Gruppe ist die älteste "
-            "Datei standardmäßig abgewählt (Original). Zeile auswählen zeigt die Datei in der "
-            "Vorschau rechts. Verschobene Dateien landen im Unterordner 'Duplikate' der "
-            "jeweiligen Quelle (oder im festgelegten Zielordner) und lassen sich per "
-            "'Verschieben rückgängig machen' wiederherstellen."
-        )
+        hint = QLabel(t("main_hint_text"))
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid);")
         body.addWidget(hint)
 
         bottom = flow_row(outer)
-        self.move_button = QPushButton("🗂 Ausgewählte in 'Duplikate'-Ordner verschieben")
+        self.move_button = QPushButton(t("main_move_button"))
         self.move_button.setEnabled(False)
-        self.move_button.setToolTip("Verschiebt alle angehakten Dateien in einen 'Duplikate'-Unterordner ihrer jeweiligen Quelle.")
+        self.move_button.setToolTip(t("main_move_tooltip"))
         self.move_button.clicked.connect(self.move_selected)
         bottom.layout().addWidget(self.move_button)
-        self.undo_button = QPushButton("↺ Verschieben rückgängig machen")
-        self.undo_button.setToolTip("Macht die zuletzt durchgeführte Verschiebe-Aktion wieder rückgängig.")
+        self.undo_button = QPushButton(t("main_undo_button"))
+        self.undo_button.setToolTip(t("main_undo_tooltip"))
         self.undo_button.clicked.connect(self.undo_last)
         bottom.layout().addWidget(self.undo_button)
         # Löscht dieselbe Häkchen-Auswahl wie "Verschieben" oben, nur in den
@@ -253,20 +247,13 @@ class DuplicateFinderApp(QWidget):
         # per Maus markierten Auswahl unten ("🗑 Markierte Zeilen löschen",
         # siehe _delete_selected()). Zwei bewusst getrennte Auswahlen für
         # zwei unterschiedliche Zwecke (siehe dortiger Kommentar).
-        self.delete_checked_btn = QPushButton("🗑 Angehakte löschen")
+        self.delete_checked_btn = QPushButton(t("main_delete_checked_button"))
         self.delete_checked_btn.setEnabled(False)
-        self.delete_checked_btn.setToolTip(
-            "Verschiebt alle angehakten Dateien in den Papierkorb - dieselbe "
-            "Auswahl wie beim Verschieben-Button oben, nur als Löschen statt "
-            "Verschieben."
-        )
+        self.delete_checked_btn.setToolTip(t("main_delete_checked_tooltip"))
         self.delete_checked_btn.clicked.connect(self._delete_checked)
         if not engine.HAS_SEND2TRASH:
             self.delete_checked_btn.setEnabled(False)
-            self.delete_checked_btn.setToolTip(
-                "Nicht verfügbar - dafür fehlt das Paket 'send2trash' "
-                "(siehe requirements.txt: pip install -r requirements.txt)."
-            )
+            self.delete_checked_btn.setToolTip(t("main_delete_unavailable_tooltip"))
         bottom.layout().addWidget(self.delete_checked_btn)
 
     def _build_source_section(self, container: QWidget) -> None:
@@ -274,7 +261,7 @@ class DuplicateFinderApp(QWidget):
         darunter kompakt der feste Standardordner). Wächst vertikal mit
         (QSizePolicy.Expanding), damit sie sich an der Höhe der - meist
         etwas höheren - Optionen-Box daneben ausrichtet."""
-        self.source_frame = TitledFrame("Quellordner")
+        self.source_frame = TitledFrame(t("main_source_frame_title"))
         self.source_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         container.layout().addWidget(self.source_frame)
 
@@ -282,34 +269,31 @@ class DuplicateFinderApp(QWidget):
         drop_row_layout = QHBoxLayout(drop_row)
         drop_row_layout.setContentsMargins(0, 0, 0, 0)
         self.drop_zone = DropZone(on_drop=self._load_paths, on_click=self.choose_folder)
-        self.drop_zone.setToolTip("Ordner/Dateien hierher ziehen oder klicken, um sie über den Ordner-Auswahldialog zu laden.")
+        self.drop_zone.setToolTip(t("main_dropzone_tooltip"))
         drop_row_layout.addWidget(self.drop_zone, 1)
 
         button_stack = QVBoxLayout()
         button_stack.setSpacing(4)
         reset_selection_btn = QPushButton("↺")
         reset_selection_btn.setFixedWidth(36)
-        reset_selection_btn.setToolTip(
-            "Setzt die aktuelle Quellauswahl zurück. Ist bereits nichts geladen, wird "
-            "stattdessen der feste Standardordner (sofern festgelegt) erneut geladen."
-        )
+        reset_selection_btn.setToolTip(t("main_reset_source_tooltip"))
         reset_selection_btn.clicked.connect(self._reset_source_selection)
         button_stack.addWidget(reset_selection_btn)
         set_default_btn = QPushButton("📌")
         set_default_btn.setFixedWidth(36)
-        set_default_btn.setToolTip("Merkt sich den aktuell geladenen Ordner dauerhaft als Standard - wird künftig bei jedem App-Start automatisch geladen.")
+        set_default_btn.setToolTip(t("main_set_default_tooltip"))
         set_default_btn.clicked.connect(self._set_default_folder)
         button_stack.addWidget(set_default_btn)
         clear_default_btn = QPushButton("✕")
         clear_default_btn.setFixedWidth(36)
-        clear_default_btn.setToolTip("Entfernt den festgelegten Standardordner - beim nächsten Start wird kein Ordner mehr automatisch geladen.")
+        clear_default_btn.setToolTip(t("main_clear_default_tooltip"))
         clear_default_btn.clicked.connect(self._clear_default_folder)
         button_stack.addWidget(clear_default_btn)
         button_stack.addStretch(1)
         drop_row_layout.addLayout(button_stack)
         self.source_frame.body_layout.addWidget(drop_row)
 
-        self.default_folder_label = QLabel("Kein Standardordner festgelegt")
+        self.default_folder_label = QLabel(t("main_no_default_folder"))
         self.default_folder_label.setWordWrap(True)
         self.source_frame.body_layout.addWidget(self.default_folder_label)
         self._refresh_default_folder_label()
@@ -320,27 +304,27 @@ class DuplicateFinderApp(QWidget):
         Fortschrittsanzeige - alle in derselben Box. Wächst vertikal mit
         (QSizePolicy.Expanding), damit sich Quellordner und Optionen immer
         an der Höhe der jeweils größeren Box ausrichten."""
-        options_frame = TitledFrame("Optionen")
+        options_frame = TitledFrame(t("main_options_frame_title"))
         options_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         container.layout().addWidget(options_frame)
 
         options_row = flow_row(None)
-        self.recursive_check = QCheckBox("Unterordner einbeziehen (rekursiv)")
+        self.recursive_check = QCheckBox(t("main_recursive_check"))
         self.recursive_check.setChecked(engine.load_settings().get("recursive", True))
         self.recursive_check.toggled.connect(self._on_recursive_toggled)
         options_row.layout().addWidget(self.recursive_check)
-        options_row.layout().addWidget(InfoIcon(RECURSIVE_HELP))
-        options_row.layout().addWidget(InfoIcon(COMPARE_HELP, title="Vergleichskriterium"))
+        options_row.layout().addWidget(InfoIcon(_recursive_help()))
+        options_row.layout().addWidget(InfoIcon(_compare_help(), title=t("main_compare_help_title")))
         options_frame.body_layout.addWidget(options_row)
 
         similar_row = flow_row(None)
-        self.similar_check = QCheckBox("🖼️ Ähnliche Bilder zusätzlich erkennen (experimentell)")
+        self.similar_check = QCheckBox(t("main_similar_check"))
         self.similar_check.setChecked(engine.load_settings().get("find_similar", False))
         self.similar_check.toggled.connect(self._on_similar_toggled)
         similar_row.layout().addWidget(self.similar_check)
-        similar_row.layout().addWidget(InfoIcon(SIMILAR_HELP, title="Ähnliche Bilder"))
+        similar_row.layout().addWidget(InfoIcon(_similar_help(), title=t("main_similar_help_title")))
         if not engine.PILLOW_AVAILABLE:
-            missing_label = QLabel("(Paket 'Pillow' fehlt - siehe requirements.txt)")
+            missing_label = QLabel(t("main_pillow_missing"))
             missing_label.setStyleSheet("color: palette(mid);")
             similar_row.layout().addWidget(missing_label)
         options_frame.body_layout.addWidget(similar_row)
@@ -349,20 +333,20 @@ class DuplicateFinderApp(QWidget):
         self.target_folder_label = QLabel()
         self.target_folder_label.setWordWrap(True)
         target_row.layout().addWidget(self.target_folder_label)
-        choose_target_btn = QPushButton("Ändern…")
-        choose_target_btn.setToolTip("Legt einen zentralen Ordner fest, in den alle verschobenen Duplikate landen - egal aus welcher Quelle.")
+        choose_target_btn = QPushButton(t("main_choose_target_button"))
+        choose_target_btn.setToolTip(t("main_choose_target_tooltip"))
         choose_target_btn.clicked.connect(self._choose_target_folder)
         target_row.layout().addWidget(choose_target_btn)
-        reset_target_btn = QPushButton("↺ Standard")
-        reset_target_btn.setToolTip("Zurück zum Standard: jede Datei landet im 'Duplikate'-Unterordner ihrer jeweiligen Quelle.")
+        reset_target_btn = QPushButton(t("main_reset_target_button"))
+        reset_target_btn.setToolTip(t("main_reset_target_tooltip"))
         reset_target_btn.clicked.connect(self._reset_target_folder)
         target_row.layout().addWidget(reset_target_btn)
-        target_row.layout().addWidget(InfoIcon(TARGET_FOLDER_HELP, title="Zielordner"))
+        target_row.layout().addWidget(InfoIcon(_target_folder_help(), title=t("main_target_folder_help_title")))
         options_frame.body_layout.addWidget(target_row)
         self._refresh_target_folder_label()
 
     def _build_result_section(self, body: QVBoxLayout) -> None:
-        result_frame = TitledFrame("Ergebnis")
+        result_frame = TitledFrame(t("main_result_frame_title"))
         result_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         body.addWidget(result_frame, 1)
 
@@ -370,7 +354,7 @@ class DuplicateFinderApp(QWidget):
         # Optionen - an der Stelle, wo vorher dauerhaft "Noch nicht
         # gescannt." stand (der Text war nie aktualisiert worden).
         scan_row = flow_row(None)
-        self.scan_button = QPushButton("🔍 Auf Duplikate prüfen")
+        self.scan_button = QPushButton(t("main_scan_button"))
         self.scan_button.clicked.connect(self.start_scan)
         scan_row.layout().addWidget(self.scan_button)
         self.progress_bar = QProgressBar()
@@ -382,15 +366,15 @@ class DuplicateFinderApp(QWidget):
         result_frame.body_layout.addWidget(scan_row)
 
         check_row = flow_row(None)
-        select_all_btn = QPushButton("☑ Alle auswählen")
-        select_all_btn.setToolTip("Hakt alle gefundenen Duplikate an - sie werden dann beim Verschieben berücksichtigt.")
+        select_all_btn = QPushButton(t("main_select_all_button"))
+        select_all_btn.setToolTip(t("main_select_all_tooltip"))
         select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
         check_row.layout().addWidget(select_all_btn)
-        select_none_btn = QPushButton("☐ Alle abwählen")
+        select_none_btn = QPushButton(t("main_select_none_button"))
         select_none_btn.clicked.connect(lambda: self._set_all_checked(False))
         check_row.layout().addWidget(select_none_btn)
-        reset_selection_btn = QPushButton("↺ Auswahl zurücksetzen (Original behalten)")
-        reset_selection_btn.setToolTip("Stellt je Gruppe die Vorauswahl wieder her: älteste Datei abgewählt (Original), restliche angehakt.")
+        reset_selection_btn = QPushButton(t("main_reset_check_button"))
+        reset_selection_btn.setToolTip(t("main_reset_check_tooltip"))
         reset_selection_btn.clicked.connect(self._reset_check_selection)
         check_row.layout().addWidget(reset_selection_btn)
         result_frame.body_layout.addWidget(check_row)
@@ -403,7 +387,9 @@ class DuplicateFinderApp(QWidget):
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(5)
-        self.tree.setHeaderLabels(["", "Datei", "Ordner", "Größe", "Geändert am"])
+        self.tree.setHeaderLabels([
+            "", t("main_col_name"), t("main_col_folder"), t("main_col_size"), t("main_col_modified"),
+        ])
         header = self.tree.header()
         header.setSectionResizeMode(COL_CHECK, QHeaderView.Fixed)
         header.setSectionResizeMode(COL_NAME, QHeaderView.Interactive)
@@ -435,22 +421,15 @@ class DuplicateFinderApp(QWidget):
         # zum Verschieben) - hier geht es um die per Maus MARKIERTEN Zeilen,
         # eine eigene, unabhängige Auswahl. Identisch zum Datei-Umbenenner.
         delete_row = flow_row(result_split.left.layout())
-        self.delete_selected_btn = QPushButton("🗑 Markierte Zeilen löschen")
-        self.delete_selected_btn.setToolTip(
-            "Verschiebt die im Baum markierten (angeklickten) Dateien in den "
-            "Papierkorb - unabhängig vom Häkchen zum Verschieben. Mehrfachauswahl per "
-            "Shift-Klick (zusammenhängend) oder Cmd-Klick (einzeln) möglich."
-        )
+        self.delete_selected_btn = QPushButton(t("main_delete_selected_button"))
+        self.delete_selected_btn.setToolTip(t("main_delete_selected_tooltip"))
         self.delete_selected_btn.clicked.connect(self._delete_selected)
         if not engine.HAS_SEND2TRASH:
             self.delete_selected_btn.setEnabled(False)
-            self.delete_selected_btn.setToolTip(
-                "Nicht verfügbar - dafür fehlt das Paket 'send2trash' "
-                "(siehe requirements.txt: pip install -r requirements.txt)."
-            )
+            self.delete_selected_btn.setToolTip(t("main_delete_unavailable_tooltip"))
         delete_row.layout().addWidget(self.delete_selected_btn)
-        self.reveal_btn = QPushButton("📂 Ablageort öffnen")
-        self.reveal_btn.setToolTip("Öffnet den Finder am Ort der aktuell in der Vorschau gezeigten Datei (markiert sie dort).")
+        self.reveal_btn = QPushButton(t("main_reveal_button"))
+        self.reveal_btn.setToolTip(t("main_reveal_tooltip"))
         self.reveal_btn.clicked.connect(self._reveal_current_in_finder)
         delete_row.layout().addWidget(self.reveal_btn)
 
@@ -462,10 +441,25 @@ class DuplicateFinderApp(QWidget):
     # Quellordner
     # ------------------------------------------------------------------
     def choose_folder(self):
-        chosen = QFileDialog.getExistingDirectory(self, "Ordner zum Prüfen auswählen")
+        chosen = QFileDialog.getExistingDirectory(self, t("main_choose_folder_dialog_title"))
         if not chosen:
             return
         self._load_paths([Path(chosen)])
+
+    def _on_language_switch_clicked(self):
+        """Wechselt zwischen Deutsch und Englisch und speichert die Wahl
+        dauerhaft (settings["language"], siehe engine.load_settings()/
+        save_settings()) - wirkt gemäß Grundgerüst-Entscheidung (siehe
+        file_renamer/ROADMAP.md "Sprachumschaltung Deutsch/Englisch") erst
+        nach einem Neustart der App, statt alle Texte live neu zu setzen."""
+        new_language = "en" if get_language() == "de" else "de"
+        set_language(new_language)
+        settings = engine.load_settings()
+        settings["language"] = new_language
+        engine.save_settings(settings)
+        QMessageBox.information(
+            self, t("language_switch_restart_title"), t("language_switch_restart_text")
+        )
 
     def _load_default_folder_if_set(self):
         folder = engine.load_settings().get("default_folder")
@@ -476,9 +470,8 @@ class DuplicateFinderApp(QWidget):
         if len(self.sources) != 1 or not self.sources[0].is_dir():
             QMessageBox.warning(
                 self,
-                "Kein eindeutiger Ordner",
-                "Bitte zuerst genau einen Ordner laden (nicht mehrere/gemischte Quellen), "
-                "um ihn als Standard festzulegen.",
+                t("main_no_unique_folder_title"),
+                t("main_no_unique_folder_text"),
             )
             return
         folder = self.sources[0]
@@ -486,7 +479,10 @@ class DuplicateFinderApp(QWidget):
         settings["default_folder"] = str(folder)
         engine.save_settings(settings)
         self._refresh_default_folder_label()
-        QMessageBox.information(self, "Gespeichert", f"'{folder}' wird künftig beim Start automatisch geladen.")
+        QMessageBox.information(
+            self, t("main_default_folder_saved_title"),
+            t("main_default_folder_saved_text").format(folder=folder),
+        )
 
     def _clear_default_folder(self):
         settings = engine.load_settings()
@@ -497,7 +493,7 @@ class DuplicateFinderApp(QWidget):
 
     def _refresh_default_folder_label(self):
         folder = engine.load_settings().get("default_folder")
-        self.default_folder_label.setText(f"📌 {folder}" if folder else "Kein Standardordner festgelegt")
+        self.default_folder_label.setText(f"📌 {folder}" if folder else t("main_no_default_folder"))
 
     def _reset_source_selection(self) -> None:
         if self.sources:
@@ -514,7 +510,7 @@ class DuplicateFinderApp(QWidget):
         if len(sources) == 1:
             summary = str(sources[0])
         elif sources:
-            summary = f"{len(sources)} Quellen ausgewählt"
+            summary = t("main_summary_multiple_sources").format(count=len(sources))
         else:
             summary = None
         self.drop_zone.set_summary(summary)
@@ -537,7 +533,7 @@ class DuplicateFinderApp(QWidget):
         return Path(folder) if folder else None
 
     def _choose_target_folder(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "Zentralen Zielordner für Duplikate wählen")
+        chosen = QFileDialog.getExistingDirectory(self, t("main_choose_target_dialog_title"))
         if not chosen:
             return
         settings = engine.load_settings()
@@ -555,16 +551,16 @@ class DuplicateFinderApp(QWidget):
     def _refresh_target_folder_label(self) -> None:
         folder = self._target_folder()
         if folder:
-            self.target_folder_label.setText(f"🗂 Zielordner: {folder}")
+            self.target_folder_label.setText(t("main_target_folder_set").format(folder=folder))
         else:
-            self.target_folder_label.setText("🗂 Zielordner: 'Duplikate'-Unterordner je Quelle (Standard)")
+            self.target_folder_label.setText(t("main_target_folder_default"))
 
     # ------------------------------------------------------------------
     # Scan
     # ------------------------------------------------------------------
     def start_scan(self):
         if not self.sources:
-            QMessageBox.information(self, "Kein Quellordner", "Bitte zuerst einen Ordner (oder Dateien) auswählen.")
+            QMessageBox.information(self, t("main_no_source_title"), t("main_no_source_text"))
             return
         if self._worker is not None:
             return
@@ -572,16 +568,14 @@ class DuplicateFinderApp(QWidget):
         find_similar = self.similar_check.isChecked()
         if find_similar and not engine.PILLOW_AVAILABLE:
             QMessageBox.warning(
-                self, "Paket fehlt",
-                "Für 'Ähnliche Bilder erkennen' fehlt das Python-Paket 'Pillow' "
-                "(siehe requirements.txt). Der Scan läuft ohne diese Option weiter.",
+                self, t("main_missing_package_title"), t("main_missing_package_text"),
             )
             find_similar = False
 
         self.scan_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # unbestimmt, solange die Dateiliste noch nicht feststeht
-        self.status_label.setText("Durchsuche Quelle(n) …")
+        self.status_label.setText(t("main_scanning_status"))
 
         self._worker = ScanWorker(
             list(self.sources), self.recursive_check.isChecked(), find_similar, self._target_folder(), self,
@@ -592,14 +586,18 @@ class DuplicateFinderApp(QWidget):
         self._worker.start()
 
     def _on_scan_progress(self, done: int, total: int, phase: str) -> None:
-        labels = {"partial": "Teil-Prüfsummen", "full": "Volle Prüfsummen", "phash": "Bildvergleich"}
+        labels = {
+            "partial": t("main_progress_partial"),
+            "full": t("main_progress_full"),
+            "phash": t("main_progress_phash"),
+        }
         label = labels.get(phase, phase)
         if total > 0:
             self.progress_bar.setRange(0, total)
             self.progress_bar.setValue(done)
-            self.status_label.setText(f"{label}: {done}/{total} …")
+            self.status_label.setText(t("main_progress_with_total").format(label=label, done=done, total=total))
         else:
-            self.status_label.setText(f"{label} …")
+            self.status_label.setText(t("main_progress_no_total").format(label=label))
 
     def _on_scan_finished(self, groups: list) -> None:
         self.groups = groups
@@ -609,28 +607,29 @@ class DuplicateFinderApp(QWidget):
         self._rebuild_tree()
 
         if not groups:
-            self.status_label.setText("Fertig - keine Duplikate gefunden.")
+            self.status_label.setText(t("main_scan_done_none"))
         else:
             total_files = sum(len(g.files) for g in groups)
             wasted = sum(g.wasted_bytes for g in groups)
             n_similar = sum(1 for g in groups if g.kind == "similar")
             n_exact = len(groups) - n_similar
-            breakdown = f"{n_exact} exakt" + (f", {n_similar} ähnlich" if n_similar else "")
+            breakdown = t("main_count_exact").format(count=n_exact) + (
+                t("main_count_similar_suffix").format(count=n_similar) if n_similar else ""
+            )
             self.status_label.setText(
-                f"Fertig - {len(groups)} Gruppe(n) ({breakdown}), {total_files} Datei(en), "
-                f"{engine.format_size(wasted)} einsparbar."
+                t("main_scan_done_summary").format(
+                    groups=len(groups), breakdown=breakdown, files=total_files,
+                    wasted=engine.format_size(wasted),
+                )
             )
 
     def _on_scan_failed(self, message: str) -> None:
         self._worker = None
         self.scan_button.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.status_label.setText("Fehler beim Scannen.")
+        self.status_label.setText(t("main_scan_failed_status"))
         QMessageBox.warning(
-            self, "Kein Zugriff",
-            "Beim Durchsuchen ist ein Fehler aufgetreten (evtl. fehlende Berechtigung "
-            "unter Systemeinstellungen → Datenschutz & Sicherheit → "
-            f"Festplattenvollzugriff):\n\n{message}",
+            self, t("main_no_access_title"), t("main_no_access_text").format(message=message),
         )
 
     # ------------------------------------------------------------------
@@ -679,17 +678,20 @@ class DuplicateFinderApp(QWidget):
             if group.kind == "similar":
                 similar_i += 1
                 label = (
-                    f"🖼️ Ähnliche Bilder {similar_i} — {len(group.files)} Dateien"
-                    + (f" — ~{group.similarity * 100:.0f}% ähnlich" if group.similarity is not None else "")
-                    + f" — {engine.format_size(group.wasted_bytes)} einsparbar"
+                    t("main_similar_group_label").format(index=similar_i, count=len(group.files))
+                    + (t("main_similarity_suffix").format(percent=round(group.similarity * 100)) if group.similarity is not None else "")
+                    + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
                 )
-                original_tooltip = "Wird als beste Qualität vorgeschlagen (größte Datei der Gruppe) - abwählbar/anders wählbar."
-                original_badge = "🖼️ Beste Qualität  "
+                original_tooltip = t("main_original_tooltip_similar")
+                original_badge = t("main_original_badge_similar")
             else:
                 exact_i += 1
-                label = f"Gruppe {exact_i} — {len(group.files)} Dateien — {engine.format_size(group.wasted_bytes)} einsparbar"
-                original_tooltip = "Wird als Original vorgeschlagen (älteste Datei der Gruppe) - abwählbar/anders wählbar."
-                original_badge = "🟢 Original  "
+                label = (
+                    t("main_exact_group_label").format(index=exact_i, count=len(group.files))
+                    + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
+                )
+                original_tooltip = t("main_original_tooltip_exact")
+                original_badge = t("main_original_badge_exact")
 
             group_item = QTreeWidgetItem([label, "", "", "", ""])
             bold = QFont()
@@ -771,10 +773,13 @@ class DuplicateFinderApp(QWidget):
         """Öffnet den Finder am Ort der aktuell in der Vorschau gezeigten
         Datei und markiert sie dort (macOS: 'open -R')."""
         if self._current_preview_path is None:
-            QMessageBox.information(self, "Keine Auswahl", "Bitte zuerst eine Datei im Baum auswählen.")
+            QMessageBox.information(self, t("main_no_selection_title"), t("main_reveal_no_selection_text"))
             return
         if not self._current_preview_path.exists():
-            QMessageBox.warning(self, "Nicht gefunden", f"'{self._current_preview_path.name}' existiert nicht mehr.")
+            QMessageBox.warning(
+                self, t("main_not_found_title"),
+                t("main_not_found_text").format(name=self._current_preview_path.name),
+            )
             return
         subprocess.run(["open", "-R", str(self._current_preview_path)])
 
@@ -818,11 +823,13 @@ class DuplicateFinderApp(QWidget):
         if not paths:
             return
         target_folder = self._target_folder()
-        destination = f"'{target_folder}'" if target_folder else "den jeweiligen 'Duplikate'-Unterordner"
+        destination = f"'{target_folder}'" if target_folder else t("main_default_destination")
         total_size = sum(p.stat().st_size for p in paths if p.exists())
         reply = QMessageBox.question(
-            self, "Duplikate verschieben",
-            f"{len(paths)} Datei(en) ({engine.format_size(total_size)}) nach {destination} verschieben?",
+            self, t("main_confirm_move_title"),
+            t("main_confirm_move_text").format(
+                count=len(paths), size=engine.format_size(total_size), destination=destination,
+            ),
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
@@ -835,8 +842,8 @@ class DuplicateFinderApp(QWidget):
 
         self._update_undo_button()
         show_partial_result(
-            self, len(performed), "verschoben", errors, total=len(paths),
-            on_success=lambda: self.status_label.setText(f"{len(performed)} Datei(en) verschoben."),
+            self, len(performed), t("main_verb_moved"), errors, total=len(paths),
+            on_success=lambda: self.status_label.setText(t("main_move_success_status").format(count=len(performed))),
         )
         # Nur die tatsächlich verschobenen Dateien aus den Gruppen entfernen,
         # statt den ganzen Scan zu verwerfen - der Rest der Ergebnisse (und
@@ -848,12 +855,11 @@ class DuplicateFinderApp(QWidget):
         self._update_undo_button()
         if errors:
             QMessageBox.warning(
-                self, "Teilweise rückgängig gemacht",
-                f"{ok} Datei(en) wiederhergestellt, bei {len(errors)} gab es ein Problem:\n\n"
-                + "\n".join(errors),
+                self, t("main_partial_undo_title"),
+                t("main_partial_undo_text").format(count=ok, errors=len(errors)) + "\n".join(errors),
             )
         elif ok:
-            QMessageBox.information(self, "Rückgängig gemacht", f"{ok} Datei(en) wiederhergestellt.")
+            QMessageBox.information(self, t("main_undo_done_title"), t("main_undo_done_text").format(count=ok))
         if self.sources:
             self._load_paths(self.sources)
 
@@ -872,24 +878,20 @@ class DuplicateFinderApp(QWidget):
             if path_str:
                 paths.append(Path(path_str))
         if not paths:
-            QMessageBox.information(
-                self, "Keine Auswahl",
-                "Bitte zuerst eine oder mehrere Zeilen im Baum markieren "
-                "(anklicken, mit Shift/Cmd für mehrere).",
-            )
+            QMessageBox.information(self, t("main_no_selection_title"), t("main_no_selection_text"))
             return
 
         names = "\n".join(p.name for p in paths[:10])
         if len(paths) > 10:
-            names += f"\n… und {len(paths) - 10} weitere"
+            names += t("main_more_files_suffix").format(count=len(paths) - 10)
         if QMessageBox.question(
-            self, "In den Papierkorb verschieben",
-            f"{len(paths)} Datei(en) werden in den Papierkorb verschoben:\n\n{names}\n\nFortfahren?",
+            self, t("main_confirm_trash_title"),
+            t("main_confirm_trash_text").format(count=len(paths), names=names),
         ) != QMessageBox.Yes:
             return
 
         count, errors = engine.move_to_trash(paths)
-        show_partial_result(self, count, "in den Papierkorb verschoben", errors)
+        show_partial_result(self, count, t("main_verb_trashed"), errors)
 
         # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
         # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine
@@ -908,16 +910,15 @@ class DuplicateFinderApp(QWidget):
 
         names = "\n".join(p.name for p in paths[:10])
         if len(paths) > 10:
-            names += f"\n… und {len(paths) - 10} weitere"
+            names += t("main_more_files_suffix").format(count=len(paths) - 10)
         if QMessageBox.question(
-            self, "In den Papierkorb verschieben",
-            f"{len(paths)} angehakte Datei(en) werden in den Papierkorb "
-            f"verschoben:\n\n{names}\n\nFortfahren?",
+            self, t("main_confirm_trash_title"),
+            t("main_confirm_trash_checked_text").format(count=len(paths), names=names),
         ) != QMessageBox.Yes:
             return
 
         count, errors = engine.move_to_trash(paths)
-        show_partial_result(self, count, "in den Papierkorb verschoben", errors)
+        show_partial_result(self, count, t("main_verb_trashed"), errors)
 
         # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
         # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine
@@ -1010,6 +1011,10 @@ def _dark_fusion_palette() -> QPalette:
 
 
 def main():
+    from qt_app_kit.i18n import init as init_translations
+
+    init_translations(translations.TEXTS, language=engine.load_settings().get("language", "de"))
+
     app = QApplication([])
     is_dark = _system_is_dark(app)
     app.setStyle("Fusion")

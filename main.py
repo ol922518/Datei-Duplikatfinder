@@ -623,14 +623,22 @@ class DuplicateFinderApp(QWidget):
         in Gruppe A auch ein bewusst abgewähltes Häkchen in der ganz
         unbeteiligten Gruppe B stillschweigend wieder anhaken (die
         Baum-Elemente werden bei jedem Neuaufbau komplett neu erzeugt, die
-        alten Checkbox-Widgets samt ihrem Zustand gehen sonst verloren)."""
-        previous_checks: dict[str, bool] = {}
+        alten Checkbox-Widgets samt ihrem Zustand gehen sonst verloren).
+        Das zuvor gesetzte Häkchen wird dabei NUR übernommen, wenn die Datei
+        auch ihre Original/Duplikat-Rolle behält - schrumpft eine Gruppe so,
+        dass eine andere Datei zum neuen Original wird, bekommt sie den für
+        Originale üblichen (abgewählten) Standard statt ihres alten,
+        Duplikat-typischen Häkchens (das sie sonst fälschlich weiter zum
+        Verschieben/Löschen vorgemerkt ließe, obwohl die Oberfläche sie
+        gerade erst als Original vorschlägt)."""
+        previous_checks: dict[str, tuple[bool, bool]] = {}
         if preserve_checks:
             for child in self._iter_child_items():
                 path_str = child.data(COL_CHECK, Qt.UserRole)
                 checkbox = self.tree.itemWidget(child, COL_CHECK)
                 if path_str and checkbox is not None:
-                    previous_checks[path_str] = checkbox.isChecked()
+                    was_original = bool(child.data(COL_CHECK, Qt.UserRole + 1))
+                    previous_checks[path_str] = (checkbox.isChecked(), was_original)
 
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -682,6 +690,7 @@ class DuplicateFinderApp(QWidget):
                     _format_mtime(entry.mtime),
                 ])
                 child.setData(COL_CHECK, Qt.UserRole, str(entry.path))
+                child.setData(COL_CHECK, Qt.UserRole + 1, is_original)
                 if is_original:
                     child.setToolTip(COL_NAME, original_tooltip)
                 # Als eigenes Top-Level-Element statt group_item.addChild():
@@ -706,9 +715,14 @@ class DuplicateFinderApp(QWidget):
                 # Signal auslöst.
                 checkbox = QCheckBox()
                 path_str = str(entry.path)
-                if path_str in previous_checks:
-                    checkbox.setChecked(previous_checks[path_str])
+                prev = previous_checks.get(path_str)
+                if prev is not None and prev[1] == is_original:
+                    checkbox.setChecked(prev[0])
                 else:
+                    # Kein vorheriger Zustand bekannt, oder die Rolle
+                    # (Original/Duplikat) hat sich seit dem letzten Aufbau
+                    # geändert - dann gilt der rollenabhängige Standard,
+                    # nicht das alte Häkchen (siehe Docstring oben).
                     checkbox.setChecked(not is_original)
                 checkbox.toggled.connect(self._update_move_button)
                 self.tree.setItemWidget(child, COL_CHECK, checkbox)

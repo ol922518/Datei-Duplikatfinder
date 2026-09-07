@@ -275,15 +275,35 @@ def is_image(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
 
 
+# Cache für _dhash(), keyed auf (Pfad, Änderungszeit, Größe, hash_size) -
+# scan_for_similar_images() berechnet den Hash jeder Datei bereits einmal;
+# ohne Cache würde recompute_similarity() (nach jedem Verschieben/Löschen
+# einzelner Dateien aus einer "Ähnliche Bilder"-Gruppe) dieselben Bilder
+# erneut komplett dekodieren/skalieren, synchron im GUI-Thread. Der
+# Schlüssel enthält mtime+Größe statt nur den Pfad, damit eine seit dem
+# letzten Hash geänderte Datei nicht fälschlich den alten (jetzt falschen)
+# Hash zurückbekommt.
+_dhash_cache: dict[tuple[str, int, int, int], int] = {}
+
+
 def _dhash(path: Path, hash_size: int = PHASH_SIZE) -> int | None:
     """Differenz-Hash (dHash): verkleinert das Bild auf (hash_size+1)x
     hash_size Graustufen-Pixel und kodiert je Zeile, ob ein Pixel heller als
     sein rechter Nachbar ist, als ein Bit. Robust gegen leichte Änderungen
     durch erneutes Speichern/Skalieren/Komprimieren - anders als der exakte
     SHA-256-Vergleich oben. Liefert None, wenn Pillow fehlt oder die Datei
-    sich nicht als Bild öffnen lässt."""
+    sich nicht als Bild öffnen lässt. Ergebnis wird pro (Pfad, mtime, Größe)
+    gecacht (siehe _dhash_cache)."""
     if not PILLOW_AVAILABLE:
         return None
+    cache_key = None
+    try:
+        stat = path.stat()
+        cache_key = (str(path), stat.st_mtime_ns, stat.st_size, hash_size)
+    except OSError:
+        pass
+    if cache_key is not None and cache_key in _dhash_cache:
+        return _dhash_cache[cache_key]
     try:
         with Image.open(path) as img:
             img = img.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
@@ -295,6 +315,8 @@ def _dhash(path: Path, hash_size: int = PHASH_SIZE) -> int | None:
         offset = row * (hash_size + 1)
         for col in range(hash_size):
             bits = (bits << 1) | (1 if pixels[offset + col] < pixels[offset + col + 1] else 0)
+    if cache_key is not None:
+        _dhash_cache[cache_key] = bits
     return bits
 
 

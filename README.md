@@ -20,17 +20,26 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Alternativ per Doppelklick auf **„App öffnen.command“** (macOS - nutzt das
-fest hinterlegte Python unter `/opt/homebrew/opt/python@3.14/bin/python3.14`,
-dort muss `PySide6` installiert sein). Öffnet dabei ein Terminal-Fenster mit
-der laufenden Ausgabe.
+Für den Alltag gibt es zwei Doppelklick-Varianten (macOS), beide fest an
+den Pfad dieses Projektordners gebunden (nicht verschiebbar, ohne den Pfad
+im jeweiligen Skript/Bundle anzupassen):
 
-Ein Versuch, stattdessen ein echtes `.app`-Bundle (ohne Terminal-Fenster) zu
-bauen, zeigte einen hartnäckigen grauen Rand um das Icon und wurde
-zurückgestellt - siehe [ROADMAP.md](ROADMAP.md).
-
-Beide sind an den festen Pfad dieses Projektordners gebunden (nicht
-verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
+- **„Datei-Duplikatfinder.app“** – echtes App-Bundle, kein Terminal-Fenster.
+  Fehler landen in `.app_launch.log` im Projektordner statt in der Konsole.
+  Ein zweiter Doppelklick bei bereits laufender App holt das bestehende
+  Fenster nach vorne, statt (wirkungslos) einen zweiten Prozess zu starten
+  (`LSMultipleInstancesProhibited`, getestet 07.09.2026). Frühere Versuche
+  zeigten bei einem selbstgebauten Bundle einen kosmetischen grauen Rand
+  ums Icon (siehe [ROADMAP.md](ROADMAP.md)) - diesmal zusätzlich das Icon
+  per Finder-eigenem "Benutzerdefiniertes Symbol"-Mechanismus gesetzt
+  (`NSWorkspace.setIcon_forFile_options_()`, nicht nur über
+  `CFBundleIconFile`), was den Rand umgehen sollte. **Noch nicht visuell
+  bestätigt** - bitte kurz im Finder prüfen, ob das Icon jetzt sauber
+  aussieht.
+- **„App öffnen.command“** – Terminal-Fenster mit laufender Ausgabe bleibt
+  sichtbar, dafür ohne jedes Icon-Risiko. Nutzt das fest hinterlegte Python
+  unter `/opt/homebrew/opt/python@3.14/bin/python3.14`, dort muss
+  `PySide6` installiert sein.
 
 ## Funktionsweise
 

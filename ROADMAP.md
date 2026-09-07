@@ -3,37 +3,46 @@
 Sammlung von Ideen und offenen Punkten für künftige Sitzungen. Diese
 Liste ist offen und wird laufend ergänzt/aufgeräumt.
 
-## App-Bundle: zweiter Start soll bestehendes Fenster hervorholen
-
-Aktuell: läuft die App bereits und man doppelklickt erneut auf die
-`.app`, hüpft das Dock-Icon kurz, ohne dass etwas passiert (kein neues
-Fenster, bestehendes wird nicht in den Vordergrund geholt). Lösung:
-`<key>LSMultipleInstancesProhibited</key><true/>` in
-`Datei-Duplikatfinder.app/Contents/Info.plist` ergänzen - ein
-macOS-Bordmittel, das LaunchServices genau dafür anweist, keinen
-zweiten Prozess zu starten, sondern stattdessen die laufende Instanz zu
-aktivieren/nach vorne zu holen. Kein eigener IPC-Code nötig.
-
-**Setzt voraus, dass ein `.app`-Bundle wieder existiert** - aktuell nicht
-der Fall (siehe nächster Punkt), beide Punkte hängen also zusammen.
-
-## Terminal-freier Start ohne grauen Icon-Rand
+## Terminal-freier Start ohne grauen Icon-Rand (Stand 07.09.2026: neuer Versuch, Bestätigung ausstehend)
 
 Ein früherer Versuch mit einem von Hand gebauten `.app`-Bundle
 (Info.plist + Launcher-Skript) zeigte bei mehreren Icon-Varianten und
 selbst nach Ad-hoc-Signierung einen leichten grauen Rand um das Icon -
-deshalb zurückgestellt, „App öffnen.command“ bleibt der aktuelle
-Startweg.
+deshalb zurückgestellt, „App öffnen.command“ blieb der Startweg.
 
-**Update:** derselbe Ansatz (unsigniertes `.app`-Bundle, Info.plist +
-Launcher-Skript) klappte beim Geschwisterprojekt
-[Dateien-Recycler](../Dateien-Recycler) auf Anhieb sauber, ohne grauen
-Rand. Der Verdacht: eher ein hängender Icon-Cache-Eintrag speziell zur
-hier verwendeten Bundle-ID als ein grundsätzliches Problem mit
-unsignierten Bundles. Noch nicht erneut versucht - lohnt sich, mit
-frischer Bundle-ID (z.B. Versions-Suffix) und vollständig geleertem
-Icon-Cache zu wiederholen, bevor an eine echte Code-Signierung oder das
-neuere Icon-Composer-Format gedacht wird.
+**Korrektur einer früheren (falschen) Notiz hier:** zuvor stand an
+dieser Stelle, der gleiche Ansatz habe beim Geschwisterprojekt
+[Dateien-Recycler](../Dateien-Recycler) "auf Anhieb sauber" funktioniert
+- das stimmt laut dortiger Commit-Nachricht (`f37265c`) nicht: der graue
+Rand trat dort ebenfalls auf, der Nutzer hat ihn manuell selbst behoben
+(vermutlich über Finder → Informationen → Icon kopieren/einfügen).
+Kein reiner Icon-Cache-Zufall also, sondern ein wiederkehrendes Muster
+bei selbstgebauten, unsignierten Bundles.
+
+**Neuer Ansatz (07.09.2026):** genau diesen manuellen Finder-Trick jetzt
+automatisiert nachgebaut, statt sich nur auf `CFBundleIconFile` im
+Info.plist zu verlassen (das war schon immer die vermutete Fehlerquelle
+für den Rand). `Datei-Duplikatfinder.app` existiert wieder (Info.plist +
+Launcher-Skript, gleiche Struktur wie beim Dateien-Recycler, frische
+Bundle-ID `build.fim.datei-duplikatfinder-2`), zusätzlich wurde das Icon
+per `NSWorkspace.setIcon_forFile_options_()` direkt auf den Bundle-Ordner
+gesetzt - derselbe Mechanismus, mit dem „App öffnen.command“ schon immer
+sein sauberes Icon bekommt (Finder-eigenes „Benutzerdefiniertes Symbol“,
+technisch eine versteckte `Icon`-Datei + `com.apple.FinderInfo`-Attribut,
+komplett unabhängig vom `CFBundleIconFile`-Rendering). `GetFileInfo`
+bestätigt das gesetzte Custom-Icon-Flag; Icon-Cache geleert, Dock/Finder
+neu gestartet. **Noch nicht visuell im Finder bestätigt** - nächster
+Schritt: Nutzer prüft, ob der graue Rand jetzt wirklich weg ist.
+
+## App-Bundle: zweiter Start holt bestehendes Fenster hervor ✅ (07.09.2026)
+
+Vorher: lief die App bereits und man doppelklickte erneut auf die
+`.app`, hüpfte das Dock-Icon kurz, ohne dass etwas passierte. Behoben
+über `<key>LSMultipleInstancesProhibited</key><true/>` in
+`Datei-Duplikatfinder.app/Contents/Info.plist` - ein macOS-Bordmittel,
+das LaunchServices anweist, keinen zweiten Prozess zu starten, sondern
+die laufende Instanz zu aktivieren. Getestet: zweiter `open`-Aufruf
+startete keinen neuen Prozess (Prozesszahl blieb bei 1).
 
 ## Ähnliche Dokumente erkennen (Textinhalt-Vergleich)
 

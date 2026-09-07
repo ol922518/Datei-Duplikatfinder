@@ -12,3 +12,12 @@ venv/
 app_settings.json
 .last_move_log.json
 .app_launch.log
+
+# Von NSWorkspace.setIcon_forFile_options_() automatisch angelegte
+# versteckte Ressourcen-Datei fürs Finder-eigene "benutzerdefiniertes
+# Icon" (Dateiname "Icon" + Carriage-Return) - reine, maschinenlokale
+# Finder-Metadatei (das eigentliche Custom-Icon-Flag steckt zusätzlich in
+# einem nicht von git verfolgten Extended Attribute, com.apple.FinderInfo)
+# und müsste nach einem Klonen auf einem anderen Rechner ohnehin per Skript
+# neu gesetzt werden - kein Quellcode, bewusst nicht versioniert.
+*.app/Icon*

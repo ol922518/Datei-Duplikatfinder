@@ -81,17 +81,21 @@ verschiebbar, ohne den Pfad im jeweiligen Skript anzupassen).
    konfigurierten zentralen Zielordner (die Ordnerstruktur innerhalb der
    Quelle bleibt jeweils erhalten). Nichts wird gelöscht. **„↺ Verschieben
    rückgängig machen“** macht die zuletzt durchgeführte Aktion wieder
-   vollständig rückgängig.
+   vollständig rückgängig. Daneben **„🗑 Angehakte löschen“** – dieselbe
+   Häkchen-Auswahl wie beim Verschieben, nur landen die Dateien direkt im
+   System-Papierkorb statt im `Duplikate`-Ordner (siehe Punkt 5 für die
+   Einschränkungen: kein Rückgängig über die App, braucht `send2trash`).
 5. **„🗑 Markierte Zeilen löschen“** (identisch zum Datei-Umbenenner) –
    verschiebt die per Maus im Baum **markierten** Dateien (anklicken, mit
    Shift für zusammenhängende bzw. Cmd für einzelne Mehrfachauswahl) in den
-   System-Papierkorb - eine von den Häkchen komplett unabhängige Auswahl.
-   Landet im Papierkorb, nicht endgültig gelöscht, aber auch nicht über die
-   eingebaute Rückgängig-Funktion wiederherstellbar (dafür ist der
-   Papierkorb selbst zuständig). Braucht das Paket `send2trash` - fehlt es,
-   ist der Button deaktiviert (Hinweis im Tooltip). Daneben **„📂 Ablageort
-   öffnen“** öffnet den Finder am Ort der aktuell in der Vorschau gezeigten
-   Datei und markiert sie dort.
+   System-Papierkorb - eine von den Häkchen komplett unabhängige Auswahl
+   (siehe „🗑 Angehakte löschen“ oben für die Häkchen-basierte Variante
+   derselben Papierkorb-Aktion). Landet im Papierkorb, nicht endgültig
+   gelöscht, aber auch nicht über die eingebaute Rückgängig-Funktion
+   wiederherstellbar (dafür ist der Papierkorb selbst zuständig). Braucht
+   das Paket `send2trash` - fehlt es, sind beide Löschen-Buttons deaktiviert
+   (Hinweis im Tooltip). Daneben **„📂 Ablageort öffnen“** öffnet den Finder
+   am Ort der aktuell in der Vorschau gezeigten Datei und markiert sie dort.
 
 Sowohl „Verschieben" als auch „Löschen" aktualisieren die Ergebnisliste
 danach **gezielt**: nur die betroffenen Dateien verschwinden aus ihren

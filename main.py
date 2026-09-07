@@ -248,6 +248,26 @@ class DuplicateFinderApp(QWidget):
         self.undo_button.setToolTip("Macht die zuletzt durchgeführte Verschiebe-Aktion wieder rückgängig.")
         self.undo_button.clicked.connect(self.undo_last)
         bottom.layout().addWidget(self.undo_button)
+        # Löscht dieselbe Häkchen-Auswahl wie "Verschieben" oben, nur in den
+        # Papierkorb statt in den 'Duplikate'-Ordner - unabhängig von der
+        # per Maus markierten Auswahl unten ("🗑 Markierte Zeilen löschen",
+        # siehe _delete_selected()). Zwei bewusst getrennte Auswahlen für
+        # zwei unterschiedliche Zwecke (siehe dortiger Kommentar).
+        self.delete_checked_btn = QPushButton("🗑 Angehakte löschen")
+        self.delete_checked_btn.setEnabled(False)
+        self.delete_checked_btn.setToolTip(
+            "Verschiebt alle angehakten Dateien in den Papierkorb - dieselbe "
+            "Auswahl wie beim Verschieben-Button oben, nur als Löschen statt "
+            "Verschieben."
+        )
+        self.delete_checked_btn.clicked.connect(self._delete_checked)
+        if not engine.HAS_SEND2TRASH:
+            self.delete_checked_btn.setEnabled(False)
+            self.delete_checked_btn.setToolTip(
+                "Nicht verfügbar - dafür fehlt das Paket 'send2trash' "
+                "(siehe requirements.txt: pip install -r requirements.txt)."
+            )
+        bottom.layout().addWidget(self.delete_checked_btn)
 
     def _build_source_section(self, container: QWidget) -> None:
         """Linke Spalte von Reihe 1: Quellordner (Drop-Zone mit Buttons,
@@ -786,7 +806,9 @@ class DuplicateFinderApp(QWidget):
         return paths
 
     def _update_move_button(self) -> None:
-        self.move_button.setEnabled(bool(self._checked_paths()))
+        has_checked = bool(self._checked_paths())
+        self.move_button.setEnabled(has_checked)
+        self.delete_checked_btn.setEnabled(has_checked and engine.HAS_SEND2TRASH)
 
     # ------------------------------------------------------------------
     # Verschieben / Rückgängig
@@ -863,6 +885,34 @@ class DuplicateFinderApp(QWidget):
         if QMessageBox.question(
             self, "In den Papierkorb verschieben",
             f"{len(paths)} Datei(en) werden in den Papierkorb verschoben:\n\n{names}\n\nFortfahren?",
+        ) != QMessageBox.Yes:
+            return
+
+        count, errors = engine.move_to_trash(paths)
+        show_partial_result(self, count, "in den Papierkorb verschoben", errors)
+
+        # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
+        # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine
+        # Datei ja an ihrem Platz), statt den ganzen Scan zu verwerfen.
+        self._remove_paths_from_results({p for p in paths if not p.exists()})
+
+    def _delete_checked(self) -> None:
+        """Verschiebt die per Häkchen angehakten Dateien in den Papierkorb
+        (Button "🗑 Angehakte löschen") - dieselbe Auswahl wie beim
+        Verschieben-Button ("🗂 Ausgewählte in 'Duplikate'-Ordner
+        verschieben"), nur als Löschen statt Verschieben. Unabhängig von
+        der per Maus markierten Auswahl, siehe _delete_selected()."""
+        paths = self._checked_paths()
+        if not paths:
+            return
+
+        names = "\n".join(p.name for p in paths[:10])
+        if len(paths) > 10:
+            names += f"\n… und {len(paths) - 10} weitere"
+        if QMessageBox.question(
+            self, "In den Papierkorb verschieben",
+            f"{len(paths)} angehakte Datei(en) werden in den Papierkorb "
+            f"verschoben:\n\n{names}\n\nFortfahren?",
         ) != QMessageBox.Yes:
             return
 

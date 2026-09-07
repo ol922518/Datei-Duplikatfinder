@@ -662,6 +662,12 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
     trotzdem behalten/protokolliert, statt komplett verworfen zu werden.
     Schreibt ein Log (LOG_FILE) für undo_last_move() und gibt
     (erfolgreiche (alter Pfad, neuer Pfad)-Paare, Fehlermeldungen) zurück.
+
+    Ein bereits vorhandenes Log wird dabei ergänzt statt überschrieben -
+    enthält es noch Einträge einer vorherigen, nur teilweise erfolgreichen
+    undo_last_move()-Aktion (siehe dort), blieben die sonst beim nächsten
+    move_to_duplicates_folder()-Aufruf unwiderruflich verloren, obwohl die
+    zugehörigen Dateien nie tatsächlich wiederhergestellt wurden.
     """
     performed: list[tuple[str, str]] = []
     errors: list[str] = []
@@ -679,7 +685,19 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
             errors.append(f"{f.name}: {exc}")
 
     if performed:
-        LOG_FILE.write_text(json.dumps(performed, ensure_ascii=False, indent=2))
+        pending: list = []
+        if LOG_FILE.exists():
+            try:
+                pending = json.loads(LOG_FILE.read_text())
+            except (OSError, ValueError):
+                pending = []
+        try:
+            LOG_FILE.write_text(json.dumps(pending + performed, ensure_ascii=False, indent=2))
+        except OSError as exc:
+            errors.append(
+                f"Protokoll für 'Rückgängig' konnte nicht gespeichert werden ({exc}) - "
+                "die soeben verschobenen Dateien lassen sich dadurch evtl. nicht automatisch zurückholen."
+            )
     return performed, errors
 
 
@@ -717,10 +735,13 @@ def undo_last_move() -> tuple[int, list[str]]:
             errors.append(f"{new_path.name}: {exc}")
             failed_indices.add(i)
 
-    if failed_indices:
-        LOG_FILE.write_text(json.dumps([entries[i] for i in sorted(failed_indices)], ensure_ascii=False, indent=2))
-    else:
-        LOG_FILE.unlink(missing_ok=True)
+    try:
+        if failed_indices:
+            LOG_FILE.write_text(json.dumps([entries[i] for i in sorted(failed_indices)], ensure_ascii=False, indent=2))
+        else:
+            LOG_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        errors.append(f"Protokoll für 'Rückgängig' konnte nicht aktualisiert werden: {exc}")
     return ok, errors
 
 

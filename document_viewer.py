@@ -472,10 +472,25 @@ class DocumentViewer(QWidget):
         Wiederherstellung würde also noch mit der Reichweite der
         VORHERIGEN Datei rechnen - das war die eigentliche Ursache dafür,
         dass "an derselben Stelle bleiben" beim Dateiwechsel unzuverlässig
-        wirkte."""
+        wirkte.
+
+        Prüft beim tatsächlichen Ausführen (nicht beim Planen) erneut, ob
+        `view` noch die aktive Seite ist - wechselt der Nutzer schneller
+        weiter, als die 0ms-Timer abgearbeitet werden (z.B. schnelles
+        Durchblättern), würde ein noch ausstehender, veralteter Restore
+        sonst setValue() auf der inzwischen unsichtbaren Ansicht aufrufen.
+        Das würde nicht nur sichtbar nichts bewirken, sondern über
+        valueChanged auch _on_scroll_changed() erneut auslösen und so
+        self._scroll_fraction mit dem (falschen) Bruchteil der alten
+        Ansicht überschreiben - ein no-op statt eines Verzichts auf die
+        Prüfung schließt das strukturell aus, statt sich auf die
+        Ausführungsreihenfolge mehrerer verschachtelter Timer zu
+        verlassen."""
         x_frac, y_frac = self._scroll_fraction
 
         def restore() -> None:
+            if self.stack.currentWidget() is not view:
+                return
             hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
             hbar.setValue(round(x_frac * hbar.maximum()))
             vbar.setValue(round(y_frac * vbar.maximum()))

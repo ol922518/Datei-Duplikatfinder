@@ -647,7 +647,8 @@ def _unique_path(path: Path) -> Path:
 
 
 def move_to_duplicates_folder(files: list[Path], roots: list[Path],
-                               target_folder: Path | None = None) -> tuple[list[tuple[str, str]], list[str]]:
+                               target_folder: Path | None = None
+                               ) -> tuple[list[tuple[str, str]], list[str], str | None]:
     """Verschiebt die gegebenen Dateien - die relative Ordnerstruktur
     innerhalb ihrer jeweiligen Quelle bleibt dabei erhalten (z.B. landet
     'Fotos/2020/bild.jpg' als 'Fotos/Duplikate/2020/bild.jpg' bzw. bei
@@ -663,14 +664,25 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
     Speicherplatz), werden die zuvor bereits erfolgreich verschobenen Dateien
     trotzdem behalten/protokolliert, statt komplett verworfen zu werden.
     Schreibt ein Log (LOG_FILE) für undo_last_move() und gibt
-    (erfolgreiche (alter Pfad, neuer Pfad)-Paare, Fehlermeldungen) zurück.
+    (erfolgreiche (alter Pfad, neuer Pfad)-Paare, Fehlermeldungen je
+    fehlgeschlagener VERSCHIEBUNG, optionale Log-Warnung) zurück.
+
+    Die Log-Warnung ist bewusst getrennt von den Fehlermeldungen: schlägt
+    nur das Schreiben des Protokolls fehl (alle Dateien aber erfolgreich
+    verschoben), landet das NICHT in der Fehlerliste - sonst würde z.B.
+    "5 von 5 verschoben, 1 Fehler" angezeigt, was nach einer fehlgeschlagenen
+    Datei klingt, obwohl tatsächlich alle verschoben wurden (Review-Finding
+    07.09.2026).
 
     Ein bereits vorhandenes Log wird dabei ergänzt statt überschrieben -
     enthält es noch Einträge einer vorherigen, nur teilweise erfolgreichen
     undo_last_move()-Aktion (siehe dort), blieben die sonst beim nächsten
     move_to_duplicates_folder()-Aufruf unwiderruflich verloren, obwohl die
-    zugehörigen Dateien nie tatsächlich wiederhergestellt wurden.
-    """
+    zugehörigen Dateien nie tatsächlich wiederhergestellt wurden. Lässt sich
+    das vorhandene Log nicht lesen (beschädigt/kein gültiges JSON), wird es
+    verworfen und stillschweigend durch den neuen Batch ersetzt - dieselbe
+    (bekannte, hier bewusst in Kauf genommene) Einschränkung wie zuvor, ein
+    beschädigtes altes Log lässt sich ohnehin nicht mehr auswerten."""
     def _move_one(f: Path) -> tuple[str, str]:
         root = _find_root(f, roots)
         rel = f.relative_to(root)
@@ -683,43 +695,86 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
 
     performed, errors, _failed = run_per_item(files, _move_one)
 
+    log_warning: str | None = None
     if performed:
         pending: list = []
         if LOG_FILE.exists():
             try:
                 pending = json.loads(LOG_FILE.read_text())
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                # Vorheriges Log nicht lesbar - wird verworfen, statt den
+                # aktuellen Batch am Schreiben zu hindern, aber NICHT mehr
+                # stillschweigend: enthielt es noch offene Retry-Einträge
+                # einer vorherigen, nur teilweise erfolgreichen
+                # undo_last_move()-Aktion, gehen die damit unwiderruflich
+                # verloren - das muss der Nutzer erfahren (Review-Finding
+                # 07.09.2026), auch wenn der aktuelle Verschiebe-Vorgang
+                # selbst vollständig geklappt hat.
                 pending = []
+                log_warning = (
+                    f"Das bisherige Protokoll für 'Rückgängig' konnte nicht gelesen werden "
+                    f"({exc}) und wurde verworfen - darin enthaltene, noch nicht "
+                    "abgeschlossene Rückgängig-Einträge früherer Verschiebe-Aktionen sind "
+                    "dadurch verloren."
+                )
         try:
             LOG_FILE.write_text(json.dumps(pending + performed, ensure_ascii=False, indent=2))
         except OSError as exc:
-            errors.append(
+            # Überschreibt eine oben evtl. schon gesetzte Warnung bewusst -
+            # ein fehlgeschlagenes Schreiben ist die dringendere der beiden
+            # möglichen Meldungen (betrifft auch den GERADE verschobenen
+            # Batch, nicht nur ältere Einträge).
+            log_warning = (
                 f"Protokoll für 'Rückgängig' konnte nicht gespeichert werden ({exc}) - "
                 "die soeben verschobenen Dateien lassen sich dadurch evtl. nicht automatisch zurückholen."
             )
-    return performed, errors
+    return performed, errors, log_warning
 
 
 def has_undo() -> bool:
     return LOG_FILE.exists()
 
 
-def undo_last_move() -> tuple[int, list[str]]:
+def undo_last_move() -> tuple[int, list[str], str | None]:
     """Macht die zuletzt per move_to_duplicates_folder() ausgeführte Aktion
     rückgängig - verschiebt jede Datei von ihrem neuen zurück an ihren alten
-    Pfad. Gibt (Anzahl erfolgreich, Liste der Fehlermeldungen) zurück.
+    Pfad. Gibt (Anzahl erfolgreich, Fehlermeldungen je fehlgeschlagener
+    DATEI, optionale Log-Warnung) zurück - dieselbe Trennung von
+    Datei-Fehlern und Protokoll-Problemen wie move_to_duplicates_folder(),
+    siehe dort.
 
     Schlägt einzelne Dateien fehl (z.B. Ursprungsordner inzwischen
     schreibgeschützt), wird das Log NICHT komplett gelöscht, sondern nur um
     die erfolgreich wiederhergestellten Einträge bereinigt - die
     fehlgeschlagenen bleiben für einen erneuten Versuch erhalten, statt
-    ihre alter-Pfad/neuer-Pfad-Zuordnung unwiderruflich zu verlieren."""
-    if not LOG_FILE.exists():
-        return 0, []
-    entries = json.loads(LOG_FILE.read_text())
+    ihre alter-Pfad/neuer-Pfad-Zuordnung unwiderruflich zu verlieren.
 
-    def _restore_one(indexed_entry: tuple[int, list[str]]) -> int:
-        i, (old, new) = indexed_entry
+    Lässt sich das Log selbst nicht lesen (beschädigt/kein gültiges JSON -
+    z.B. weil die App während eines vorherigen Schreibvorgangs abgestürzt
+    ist), wird das als Fehler zurückgegeben statt eine ungefangene
+    Exception auszulösen (Review-Finding 07.09.2026 - vorher konnte das
+    einen Klick auf "Rückgängig" zum Absturz der ganzen App führen)."""
+    if not LOG_FILE.exists():
+        return 0, [], None
+    try:
+        entries = json.loads(LOG_FILE.read_text())
+    except (OSError, ValueError) as exc:
+        return 0, [f"Protokoll für 'Rückgängig' konnte nicht gelesen werden: {exc}"], None
+
+    def _restore_one(indexed_entry: tuple[int, object]) -> int:
+        i, entry = indexed_entry
+        # entry kommt aus JSON und könnte durch eine beschädigte/von Hand
+        # bearbeitete LOG_FILE eine falsche Form haben - ein ValueError/
+        # TypeError beim Entpacken ist KEIN OSError und würde von
+        # run_per_item() sonst nicht abgefangen, sondern die komplette
+        # Schleife abbrechen (auch die noch gar nicht versuchten Einträge)
+        # statt nur diesen einen Eintrag als fehlgeschlagen zu behandeln -
+        # deshalb hier explizit in ein OSError umgewandelt (Review-Finding
+        # 07.09.2026).
+        try:
+            old, new = entry
+        except (ValueError, TypeError) as exc:
+            raise OSError(f"Eintrag #{i} im Protokoll ist beschädigt: {exc}") from exc
         old_path, new_path = Path(old), Path(new)
         if not new_path.exists():
             raise FileNotFoundError(f"'{new_path}' existiert nicht mehr")
@@ -728,24 +783,34 @@ def undo_last_move() -> tuple[int, list[str]]:
         shutil.move(str(new_path), str(target))
         return i
 
+    def _label(indexed_entry: tuple[int, object]) -> str:
+        # Ebenfalls robust gegen eine beschädigte entry-Form - run_per_item()
+        # ruft label() beim Formatieren der Fehlermeldung auf, ein zweiter
+        # Fehler hier würde denselben Effekt haben wie in _restore_one() oben.
+        i, entry = indexed_entry
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            return Path(entry[1]).name
+        return f"Eintrag #{i}"
+
     # Neueste zuerst rückgängig machen (wie zuvor) - reversed(list(enumerate(...)))
     # statt einer absteigenden range(), aber mit identischem Ergebnis.
     restored_indices, errors, failed = run_per_item(
         list(reversed(list(enumerate(entries)))),
         _restore_one,
-        label=lambda indexed_entry: Path(indexed_entry[1][1]).name,
+        label=_label,
     )
     ok = len(restored_indices)
     failed_indices = {i for i, _entry in failed}
 
+    log_warning: str | None = None
     try:
         if failed_indices:
             LOG_FILE.write_text(json.dumps([entries[i] for i in sorted(failed_indices)], ensure_ascii=False, indent=2))
         else:
             LOG_FILE.unlink(missing_ok=True)
     except OSError as exc:
-        errors.append(f"Protokoll für 'Rückgängig' konnte nicht aktualisiert werden: {exc}")
-    return ok, errors
+        log_warning = f"Protokoll für 'Rückgängig' konnte nicht aktualisiert werden: {exc}"
+    return ok, errors, log_warning
 
 
 def move_to_trash(paths: list[Path]) -> tuple[int, list[str]]:

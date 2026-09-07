@@ -14,6 +14,7 @@ Starten mit:  python3 main.py
 
 from __future__ import annotations
 
+import functools
 import subprocess
 from pathlib import Path
 
@@ -142,6 +143,40 @@ def _log_unexpected_error(exc: Exception) -> None:
             f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
     except Exception:
         pass
+
+
+def _guard_slot(method):
+    """Decorator für Klick-Handler, die Dateien verschieben/löschen/
+    rückgängig machen (siehe move_selected()/undo_last()/
+    _delete_selected()/_delete_checked() unten) - fängt jede unerwartete
+    Exception ab, BEVOR sie den Qt-Slot verlässt.
+
+    Grund (Review-Finding 07.09.2026): diese vier Methoden sind direkt an
+    QPushButton.clicked-Signale angeschlossen (native Qt-C++-Signale).
+    Verlässt eine Python-Exception einen so verbundenen Slot ungefangen,
+    ist das anders als bei einer normalen Python-Funktion - PySide6/
+    Shiboken kann die Exception nicht sicher durch den C++-Aufruf-Stack
+    zurückreichen, das Standardverhalten ist ein Traceback auf stderr
+    und je nach Situation ein Abbruch der GESAMTEN App, nicht nur ein
+    wirkungsloser Klick. Genau die Absicherung, die ScanWorker.run() für
+    den Hintergrund-Thread bekommen hat, fehlte für diese vier - höheres
+    Risiko sogar, weil sie echte Nutzerdateien verändern statt nur zu
+    lesen.
+
+    Protokolliert wie ScanWorker.run() den vollständigen Traceback in
+    CRASH_LOG_FILE und zeigt denselben "Unerwarteter Fehler"-Dialog."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as exc:
+            _log_unexpected_error(exc)
+            QMessageBox.critical(
+                self, t("main_unexpected_error_title"),
+                t("main_unexpected_error_text").format(message=f"{type(exc).__name__}: {exc}"),
+            )
+            return None
+    return wrapper
 
 
 class ScanWorker(QThread):
@@ -921,6 +956,18 @@ class DuplicateFinderApp(QWidget):
                 paths.append(Path(child.data(COL_CHECK, Qt.UserRole)))
         return paths
 
+    def _known_file_sizes(self) -> dict[Path, int]:
+        """Dateigrößen aus dem letzten Scan (FileEntry.size) - vermeidet in
+        move_selected() ein erneutes stat() je Datei nur für die
+        Größenangabe im Bestätigungsdialog (Review-Finding 07.09.2026:
+        bei vielen tausend angehakten Dateien unnötig viele Syscalls,
+        zusätzlich eine TOCTOU-Lücke zwischen exists()- und stat()-Aufruf)."""
+        sizes: dict[Path, int] = {}
+        for group in self.groups:
+            for entry in group.files:
+                sizes[entry.path] = entry.size
+        return sizes
+
     def _update_move_button(self) -> None:
         has_checked = bool(self._checked_paths())
         self.move_button.setEnabled(has_checked)
@@ -929,13 +976,15 @@ class DuplicateFinderApp(QWidget):
     # ------------------------------------------------------------------
     # Verschieben / Rückgängig
     # ------------------------------------------------------------------
+    @_guard_slot
     def move_selected(self) -> None:
         paths = self._checked_paths()
         if not paths:
             return
         target_folder = self._target_folder()
         destination = f"'{target_folder}'" if target_folder else t("main_default_destination")
-        total_size = sum(p.stat().st_size for p in paths if p.exists())
+        known_sizes = self._known_file_sizes()
+        total_size = sum(known_sizes.get(p, 0) for p in paths)
         reply = QMessageBox.question(
             self, t("main_confirm_move_title"),
             t("main_confirm_move_text").format(
@@ -949,34 +998,46 @@ class DuplicateFinderApp(QWidget):
         # move_to_duplicates_folder() versucht jede Datei einzeln - eine
         # fehlgeschlagene Datei verwirft nicht mehr die bereits erfolgreich
         # verschobenen (die bleiben protokolliert/nachvollziehbar).
-        performed, errors = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
+        # log_warning ist separat von errors: errors sind fehlgeschlagene
+        # VERSCHIEBUNGEN, log_warning bedeutet "alles verschoben, aber das
+        # Rückgängig-Protokoll konnte nicht geschrieben werden" - beides in
+        # dieselbe Fehlerliste zu mischen hätte z.B. "5 von 5 verschoben,
+        # 1 Fehler" ergeben, was nach einer fehlgeschlagenen Datei klingt,
+        # obwohl tatsächlich alle verschoben wurden (Review-Finding
+        # 07.09.2026).
+        performed, errors, log_warning = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
 
         self._update_undo_button()
         show_partial_result(
             self, len(performed), t("main_verb_moved"), errors, total=len(paths),
             on_success=lambda: self.status_label.setText(t("main_move_success_status").format(count=len(performed))),
         )
+        if log_warning:
+            QMessageBox.warning(self, t("main_undo_log_warning_title"), log_warning)
         # Nur die tatsächlich verschobenen Dateien aus den Gruppen entfernen,
         # statt den ganzen Scan zu verwerfen - der Rest der Ergebnisse (und
         # die Vorschau, falls nicht betroffen) bleibt so erhalten.
         self._remove_paths_from_results({Path(old) for old, _new in performed})
 
+    @_guard_slot
     def undo_last(self) -> None:
-        ok, errors = engine.undo_last_move()
+        # Nutzt wie move_selected()/_delete_selected()/_delete_checked()
+        # den geteilten show_partial_result() statt eigener Dialoge (bis
+        # 07.09.2026 eine Ausnahme in dieser Datei - unnötig, siehe
+        # Review-Finding: file_renamers analoges undo_last() nutzt
+        # denselben Helfer bereits erfolgreich).
+        ok, errors, log_warning = engine.undo_last_move()
         self._update_undo_button()
-        if errors:
-            QMessageBox.warning(
-                self, t("main_partial_undo_title"),
-                t("main_partial_undo_text").format(count=ok, errors=len(errors)) + "\n".join(errors),
-            )
-        elif ok:
-            QMessageBox.information(self, t("main_undo_done_title"), t("main_undo_done_text").format(count=ok))
+        show_partial_result(self, ok, t("main_verb_restored"), errors)
+        if log_warning:
+            QMessageBox.warning(self, t("main_undo_log_warning_title"), log_warning)
         if self.sources:
             self._load_paths(self.sources)
 
     def _update_undo_button(self) -> None:
         self.undo_button.setEnabled(engine.has_undo())
 
+    @_guard_slot
     def _delete_selected(self) -> None:
         """Verschiebt die per Maus im Baum markierten Dateien in den
         Papierkorb (Button "🗑 Markierte Zeilen löschen") - unabhängig vom
@@ -1002,13 +1063,14 @@ class DuplicateFinderApp(QWidget):
             return
 
         count, errors = engine.move_to_trash(paths)
-        show_partial_result(self, count, t("main_verb_trashed"), errors)
+        show_partial_result(self, count, t("main_verb_trashed"), errors, total=len(paths))
 
         # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
         # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine
         # Datei ja an ihrem Platz), statt den ganzen Scan zu verwerfen.
         self._remove_paths_from_results({p for p in paths if not p.exists()})
 
+    @_guard_slot
     def _delete_checked(self) -> None:
         """Verschiebt die per Häkchen angehakten Dateien in den Papierkorb
         (Button "🗑 Angehakte löschen") - dieselbe Auswahl wie beim
@@ -1029,7 +1091,7 @@ class DuplicateFinderApp(QWidget):
             return
 
         count, errors = engine.move_to_trash(paths)
-        show_partial_result(self, count, t("main_verb_trashed"), errors)
+        show_partial_result(self, count, t("main_verb_trashed"), errors, total=len(paths))
 
         # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
         # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine

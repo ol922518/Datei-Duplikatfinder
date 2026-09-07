@@ -393,13 +393,13 @@ TEXTS: Texts = {
     "main_unexpected_error_title": {"de": "Unerwarteter Fehler", "en": "Unexpected error"},
     "main_unexpected_error_text": {
         "de": (
-            "Beim Scannen ist ein unerwarteter Fehler aufgetreten:\n\n{message}\n\n"
+            "Es ist ein unerwarteter Fehler aufgetreten:\n\n{message}\n\n"
             "Der vollständige technische Fehlerbericht wird zusätzlich in "
             "'.app_launch.log' im Projektordner protokolliert, sofern die Datei "
             "beschreibbar ist."
         ),
         "en": (
-            "An unexpected error occurred while scanning:\n\n{message}\n\n"
+            "An unexpected error occurred:\n\n{message}\n\n"
             "The full technical error report is additionally logged to "
             "'.app_launch.log' in the project folder, provided that file is "
             "writable."
@@ -443,15 +443,10 @@ TEXTS: Texts = {
     },
     "main_verb_moved": {"de": "verschoben", "en": "moved"},
     "main_move_success_status": {"de": "{count} Datei(en) verschoben.", "en": "{count} file(s) moved."},
+    "main_undo_log_warning_title": {"de": "Rückgängig eingeschränkt", "en": "Undo limited"},
 
     # -- main.py: Rückgängig machen -------------------------------------------
-    "main_partial_undo_title": {"de": "Teilweise rückgängig gemacht", "en": "Partially undone"},
-    "main_partial_undo_text": {
-        "de": "{count} Datei(en) wiederhergestellt, bei {errors} gab es ein Problem:\n\n",
-        "en": "{count} file(s) restored, {errors} had a problem:\n\n",
-    },
-    "main_undo_done_title": {"de": "Rückgängig gemacht", "en": "Undone"},
-    "main_undo_done_text": {"de": "{count} Datei(en) wiederhergestellt.", "en": "{count} file(s) restored."},
+    "main_verb_restored": {"de": "wiederhergestellt", "en": "restored"},
 
     # -- main.py: Markierte/Angehakte Zeilen löschen --------------------------
     "main_no_selection_text": {

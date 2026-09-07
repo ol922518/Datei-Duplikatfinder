@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 import duplicate_engine as engine
 from document_viewer import DocumentViewer
 from qt_app_kit.qt_widgets import InfoIcon, ResizableSplitFrame, TitledFrame, TwoColumnFrame, flow_row
+from qt_app_kit.result_dialogs import show_partial_result
 
 RECURSIVE_HELP = (
     "Bezieht beim Scannen auch alle Unterordner der gewählten Quelle(n) mit ein - "
@@ -811,13 +812,10 @@ class DuplicateFinderApp(QWidget):
         performed, errors = engine.move_to_duplicates_folder(paths, self.sources, target_folder=target_folder)
 
         self._update_undo_button()
-        if errors:
-            QMessageBox.warning(
-                self, "Teilweise erfolgreich",
-                f"{len(performed)} von {len(paths)} Datei(en) verschoben, {len(errors)} Fehler:\n" + "\n".join(errors),
-            )
-        else:
-            self.status_label.setText(f"{len(performed)} Datei(en) verschoben.")
+        show_partial_result(
+            self, len(performed), "verschoben", errors, total=len(paths),
+            on_success=lambda: self.status_label.setText(f"{len(performed)} Datei(en) verschoben."),
+        )
         # Nur die tatsächlich verschobenen Dateien aus den Gruppen entfernen,
         # statt den ganzen Scan zu verwerfen - der Rest der Ergebnisse (und
         # die Vorschau, falls nicht betroffen) bleibt so erhalten.
@@ -869,11 +867,7 @@ class DuplicateFinderApp(QWidget):
             return
 
         count, errors = engine.move_to_trash(paths)
-        if errors:
-            QMessageBox.warning(self, "Teilweise erfolgreich",
-                                 f"{count} in den Papierkorb verschoben, {len(errors)} Fehler:\n" + "\n".join(errors))
-        else:
-            QMessageBox.information(self, "Fertig", f"{count} Datei(en) in den Papierkorb verschoben.")
+        show_partial_result(self, count, "in den Papierkorb verschoben", errors)
 
         # Nur die tatsächlich gelöschten Dateien aus den Gruppen entfernen
         # (an ihrer Nicht-mehr-Existenz erkennbar - bei Fehlern bleibt eine

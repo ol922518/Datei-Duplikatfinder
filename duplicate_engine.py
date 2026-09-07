@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from qt_app_kit.file_ops import run_per_item
+
 try:
     from PIL import ExifTags, Image
     from PIL.ExifTags import TAGS
@@ -669,20 +671,17 @@ def move_to_duplicates_folder(files: list[Path], roots: list[Path],
     move_to_duplicates_folder()-Aufruf unwiderruflich verloren, obwohl die
     zugehörigen Dateien nie tatsächlich wiederhergestellt wurden.
     """
-    performed: list[tuple[str, str]] = []
-    errors: list[str] = []
-    for f in files:
-        try:
-            root = _find_root(f, roots)
-            rel = f.relative_to(root)
-            base = target_folder if target_folder is not None else (root / DUPLICATES_FOLDER_NAME)
-            target = base / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target = _unique_path(target)
-            shutil.move(str(f), str(target))
-            performed.append((str(f), str(target)))
-        except OSError as exc:
-            errors.append(f"{f.name}: {exc}")
+    def _move_one(f: Path) -> tuple[str, str]:
+        root = _find_root(f, roots)
+        rel = f.relative_to(root)
+        base = target_folder if target_folder is not None else (root / DUPLICATES_FOLDER_NAME)
+        target = base / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target = _unique_path(target)
+        shutil.move(str(f), str(target))
+        return str(f), str(target)
+
+    performed, errors, _failed = run_per_item(files, _move_one)
 
     if performed:
         pending: list = []
@@ -718,22 +717,26 @@ def undo_last_move() -> tuple[int, list[str]]:
     if not LOG_FILE.exists():
         return 0, []
     entries = json.loads(LOG_FILE.read_text())
-    ok = 0
-    errors: list[str] = []
-    failed_indices: set[int] = set()
-    for i in range(len(entries) - 1, -1, -1):
-        old, new = entries[i]
+
+    def _restore_one(indexed_entry: tuple[int, list[str]]) -> int:
+        i, (old, new) = indexed_entry
         old_path, new_path = Path(old), Path(new)
-        try:
-            if not new_path.exists():
-                raise FileNotFoundError(f"'{new_path}' existiert nicht mehr")
-            old_path.parent.mkdir(parents=True, exist_ok=True)
-            target = old_path if not old_path.exists() else _unique_path(old_path)
-            shutil.move(str(new_path), str(target))
-            ok += 1
-        except OSError as exc:
-            errors.append(f"{new_path.name}: {exc}")
-            failed_indices.add(i)
+        if not new_path.exists():
+            raise FileNotFoundError(f"'{new_path}' existiert nicht mehr")
+        old_path.parent.mkdir(parents=True, exist_ok=True)
+        target = old_path if not old_path.exists() else _unique_path(old_path)
+        shutil.move(str(new_path), str(target))
+        return i
+
+    # Neueste zuerst rückgängig machen (wie zuvor) - reversed(list(enumerate(...)))
+    # statt einer absteigenden range(), aber mit identischem Ergebnis.
+    restored_indices, errors, failed = run_per_item(
+        list(reversed(list(enumerate(entries)))),
+        _restore_one,
+        label=lambda indexed_entry: Path(indexed_entry[1][1]).name,
+    )
+    ok = len(restored_indices)
+    failed_indices = {i for i, _entry in failed}
 
     try:
         if failed_indices:

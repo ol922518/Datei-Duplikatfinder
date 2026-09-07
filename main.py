@@ -110,19 +110,29 @@ class DropZone(QFrame):
             self._on_click()
 
 
-# Dieselbe Datei, in die "Datei-Duplikatfinder.app"/"App öffnen.command"
-# bereits Fehler beim Start umleiten (siehe Launcher-Skript im
-# App-Bundle) - unabhängig davon, wie main.py gerade gestartet wurde
-# (Bundle, .command-Skript oder direkt "python3 main.py"), landet ein
-# unerwarteter Scan-Fehler damit immer an derselben, bekannten Stelle.
+# Dieselbe Datei, in die "Datei-Duplikatfinder.app" bereits Fehler beim
+# Start umleitet (siehe Launcher-Skript im App-Bundle) - unabhängig
+# davon, wie main.py gerade gestartet wurde (Bundle oder direkt
+# "python3 main.py"/"App öffnen.command"), landet ein unerwarteter
+# Scan-Fehler damit immer an derselben, bekannten Stelle. Hinweis: "App
+# öffnen.command" leitet NICHT hierher um - das ist bei diesem Launcher
+# bewusst so (sichtbares Terminal-Fenster mit laufender Ausgabe ist
+# genau sein Zweck, siehe README.md), Start-Fehler darüber landen also
+# nur im Terminal, nicht in dieser Datei.
 CRASH_LOG_FILE = Path(__file__).resolve().parent / ".app_launch.log"
 
 
 def _log_unexpected_error(exc: Exception) -> None:
     """Hängt einen vollständigen Traceback an CRASH_LOG_FILE an - siehe
-    ScanWorker.run(). Schlägt auch das fehl (z.B. Ordner nicht
-    schreibbar), bleibt nur die (deutlich knappere) Dialogmeldung übrig,
-    kein weiterer Absturz."""
+    ScanWorker.run(). Fängt bewusst JEDEN Fehler ab (nicht nur OSError),
+    nicht nur Probleme beim Dateizugriff - z.B. auch einen
+    UnicodeEncodeError beim Schreiben einer Fehlermeldung mit
+    ungewöhnlichen Zeichen. Das Logging selbst darf niemals eine neue,
+    ungefangene Exception auslösen, sonst würde ScanWorker.run() genau an
+    der Stelle abbrechen, die diese Funktion eigentlich nur protokollieren
+    soll - self.failed.emit(...) direkt danach würde dann nie mehr
+    aufgerufen, und der Hintergrund-Thread stürbe wieder lautlos, exakt
+    der Bug, den diese Funktion beheben soll."""
     import traceback
     from datetime import datetime
 
@@ -130,7 +140,7 @@ def _log_unexpected_error(exc: Exception) -> None:
         with CRASH_LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(f"\n--- {datetime.now().isoformat(timespec='seconds')} ---\n")
             f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
-    except OSError:
+    except Exception:
         pass
 
 
@@ -714,129 +724,133 @@ class DuplicateFinderApp(QWidget):
         # sofort neu zeichnet/layoutet (siehe Kommentar bei
         # self.tree.addTopLevelItems() weiter unten - der eigentliche Fix
         # ist das gebündelte Einfügen, dies hier nur zusätzliche
-        # Absicherung).
+        # Absicherung). try/finally darum, damit eine Exception mittendrin
+        # (z.B. ein kaputtes Änderungsdatum in _format_mtime()) den Baum
+        # nicht dauerhaft eingefroren/nicht-interaktiv zurücklässt - siehe
+        # Review-Finding 07.09.2026.
         self.tree.setUpdatesEnabled(False)
-        self.tree.clear()
-        # Ist der zuvor gemerkte Vorschau-Pfad nicht mehr gültig (Datei
-        # verschoben/gelöscht), auch das Tracking selbst zurücksetzen -
-        # sonst hält die App eine "Auswahl" fest, die im Viewer längst
-        # nicht mehr sichtbar ist (z.B. "📂 Ablageort öffnen" meldete dann
-        # fälschlich "existiert nicht mehr" statt "keine Auswahl").
-        if self._current_preview_path is not None and not self._current_preview_path.exists():
-            self._current_preview_path = None
-        if self._current_preview_path is None:
-            self.viewer.clear()
+        try:
+            self.tree.clear()
+            # Ist der zuvor gemerkte Vorschau-Pfad nicht mehr gültig (Datei
+            # verschoben/gelöscht), auch das Tracking selbst zurücksetzen -
+            # sonst hält die App eine "Auswahl" fest, die im Viewer längst
+            # nicht mehr sichtbar ist (z.B. "📂 Ablageort öffnen" meldete dann
+            # fälschlich "existiert nicht mehr" statt "keine Auswahl").
+            if self._current_preview_path is not None and not self._current_preview_path.exists():
+                self._current_preview_path = None
+            if self._current_preview_path is None:
+                self.viewer.clear()
 
-        # Alle Zeilen werden zunächst nur als Python-Objekte gesammelt
-        # (all_items) und ERST GANZ AM ENDE in einem einzigen Aufruf
-        # eingefügt (siehe addTopLevelItems() unten) - nicht sofort per
-        # addTopLevelItem() in dieser Schleife. Grund (Bug-Report
-        # 07.09.2026, per Live-Stack-Sample bestätigt): jeder einzelne
-        # addTopLevelItem()-Aufruf löst in Qt eine komplette Neuberechnung
-        # des gesamten Baum-Layouts aus (inkl. Text-Shaping aller
-        # sichtbaren Zeilen, sichtbar im Profil als
-        # QTreeView::updateGeometries() -> QTextEngine::shapeText()) - bei
-        # wenigen hundert Zeilen unmerklich, bei mehreren tausend (z.B.
-        # 1695 gescannte Dateien) ein mehrminütiges Einfrieren der
-        # Oberfläche OHNE Fehlermeldung, da rein rechnerisch, nicht
-        # abgestürzt. Checkbox-Widgets (brauchen eine bereits im Baum
-        # hängende Zeile) werden deshalb ebenfalls erst in einem zweiten
-        # Durchlauf NACH dem Batch-Insert gesetzt.
-        all_items: list[QTreeWidgetItem] = []
-        group_items: list[QTreeWidgetItem] = []
-        pending_checkboxes: list[tuple[QTreeWidgetItem, bool, str]] = []
+            # Alle Zeilen werden zunächst nur als Python-Objekte gesammelt
+            # (all_items) und ERST GANZ AM ENDE in einem einzigen Aufruf
+            # eingefügt (siehe addTopLevelItems() unten) - nicht sofort per
+            # addTopLevelItem() in dieser Schleife. Grund (Bug-Report
+            # 07.09.2026, per Live-Stack-Sample bestätigt): jeder einzelne
+            # addTopLevelItem()-Aufruf löst in Qt eine komplette Neuberechnung
+            # des gesamten Baum-Layouts aus (inkl. Text-Shaping aller
+            # sichtbaren Zeilen, sichtbar im Profil als
+            # QTreeView::updateGeometries() -> QTextEngine::shapeText()) - bei
+            # wenigen hundert Zeilen unmerklich, bei mehreren tausend (z.B.
+            # 1695 gescannte Dateien) ein mehrminütiges Einfrieren der
+            # Oberfläche OHNE Fehlermeldung, da rein rechnerisch, nicht
+            # abgestürzt. Checkbox-Widgets (brauchen eine bereits im Baum
+            # hängende Zeile) werden deshalb ebenfalls erst in einem zweiten
+            # Durchlauf NACH dem Batch-Insert gesetzt.
+            all_items: list[QTreeWidgetItem] = []
+            group_items: list[QTreeWidgetItem] = []
+            pending_checkboxes: list[tuple[QTreeWidgetItem, bool, str]] = []
 
-        exact_i = 0
-        similar_i = 0
-        for group in self.groups:
-            if group.kind == "similar":
-                similar_i += 1
-                label = (
-                    t("main_similar_group_label").format(index=similar_i, count=len(group.files))
-                    + (t("main_similarity_suffix").format(percent=round(group.similarity * 100)) if group.similarity is not None else "")
-                    + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
-                )
-                original_tooltip = t("main_original_tooltip_similar")
-                original_badge = t("main_original_badge_similar")
-            else:
-                exact_i += 1
-                label = (
-                    t("main_exact_group_label").format(index=exact_i, count=len(group.files))
-                    + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
-                )
-                original_tooltip = t("main_original_tooltip_exact")
-                original_badge = t("main_original_badge_exact")
+            exact_i = 0
+            similar_i = 0
+            for group in self.groups:
+                if group.kind == "similar":
+                    similar_i += 1
+                    label = (
+                        t("main_similar_group_label").format(index=similar_i, count=len(group.files))
+                        + (t("main_similarity_suffix").format(percent=round(group.similarity * 100)) if group.similarity is not None else "")
+                        + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
+                    )
+                    original_tooltip = t("main_original_tooltip_similar")
+                    original_badge = t("main_original_badge_similar")
+                else:
+                    exact_i += 1
+                    label = (
+                        t("main_exact_group_label").format(index=exact_i, count=len(group.files))
+                        + t("main_wasted_suffix").format(wasted=engine.format_size(group.wasted_bytes))
+                    )
+                    original_tooltip = t("main_original_tooltip_exact")
+                    original_badge = t("main_original_badge_exact")
 
-            group_item = QTreeWidgetItem([label, "", "", "", ""])
-            bold = QFont()
-            bold.setBold(True)
-            group_item.setFont(0, bold)
-            all_items.append(group_item)
-            group_items.append(group_item)
+                group_item = QTreeWidgetItem([label, "", "", "", ""])
+                bold = QFont()
+                bold.setBold(True)
+                group_item.setFont(0, bold)
+                all_items.append(group_item)
+                group_items.append(group_item)
 
-            for idx, entry in enumerate(group.files):
-                is_original = idx == 0  # Index 0 = Original-Vorschlag (siehe DuplicateGroup-Sortierkonvention)
-                # Badge (Original/Beste Qualität) vorangestellt statt
-                # angehängt - so bleibt er unabhängig von der Länge des
-                # Dateinamens immer an derselben Stelle erkennbar.
-                child = QTreeWidgetItem([
-                    "",
-                    (original_badge if is_original else "") + entry.path.name,
-                    str(entry.path.parent),
-                    engine.format_size(entry.size),
-                    _format_mtime(entry.mtime),
-                ])
-                child.setData(COL_CHECK, Qt.UserRole, str(entry.path))
-                child.setData(COL_CHECK, Qt.UserRole + 1, is_original)
-                if is_original:
-                    child.setToolTip(COL_NAME, original_tooltip)
-                # Als eigenes Top-Level-Element statt group_item.addChild():
-                # QTreeWidget positioniert bei echten Kind-Elementen per
-                # setItemWidget() gesetzte Checkbox-Widgets nachweislich
-                # falsch (immer bei (0,0) statt in der jeweiligen Zeile -
-                # reproduzierbar per Pixelvergleich, unabhängig von Stil/
-                # Palette). Als Geschwister-Element klappt es einwandfrei.
-                # setRootIsDecorated(False) blendet dafür die (bei echten
-                # Kindern üblichen) Einrückung/den Pfeil aus, die fette
-                # Gruppenzeile bleibt trotzdem als optische Trennung sichtbar.
-                # Einfügen ins Baum-Widget selbst passiert gebündelt weiter
-                # unten (siehe addTopLevelItems()), hier nur sammeln.
-                all_items.append(child)
-                pending_checkboxes.append((child, is_original, str(entry.path)))
+                for idx, entry in enumerate(group.files):
+                    is_original = idx == 0  # Index 0 = Original-Vorschlag (siehe DuplicateGroup-Sortierkonvention)
+                    # Badge (Original/Beste Qualität) vorangestellt statt
+                    # angehängt - so bleibt er unabhängig von der Länge des
+                    # Dateinamens immer an derselben Stelle erkennbar.
+                    child = QTreeWidgetItem([
+                        "",
+                        (original_badge if is_original else "") + entry.path.name,
+                        str(entry.path.parent),
+                        engine.format_size(entry.size),
+                        _format_mtime(entry.mtime),
+                    ])
+                    child.setData(COL_CHECK, Qt.UserRole, str(entry.path))
+                    child.setData(COL_CHECK, Qt.UserRole + 1, is_original)
+                    if is_original:
+                        child.setToolTip(COL_NAME, original_tooltip)
+                    # Als eigenes Top-Level-Element statt group_item.addChild():
+                    # QTreeWidget positioniert bei echten Kind-Elementen per
+                    # setItemWidget() gesetzte Checkbox-Widgets nachweislich
+                    # falsch (immer bei (0,0) statt in der jeweiligen Zeile -
+                    # reproduzierbar per Pixelvergleich, unabhängig von Stil/
+                    # Palette). Als Geschwister-Element klappt es einwandfrei.
+                    # setRootIsDecorated(False) blendet dafür die (bei echten
+                    # Kindern üblichen) Einrückung/den Pfeil aus, die fette
+                    # Gruppenzeile bleibt trotzdem als optische Trennung sichtbar.
+                    # Einfügen ins Baum-Widget selbst passiert gebündelt weiter
+                    # unten (siehe addTopLevelItems()), hier nur sammeln.
+                    all_items.append(child)
+                    pending_checkboxes.append((child, is_original, str(entry.path)))
 
-        # Einziger Einfüge-Aufruf für den gesamten Baum (Gruppenzeilen +
-        # Dateizeilen zusammen) statt eines addTopLevelItem()-Aufrufs pro
-        # Zeile - siehe Kommentar oben, das ist der eigentliche Performance-
-        # Fix.
-        self.tree.addTopLevelItems(all_items)
-        for group_item in group_items:
-            group_item.setFirstColumnSpanned(True)
+            # Einziger Einfüge-Aufruf für den gesamten Baum (Gruppenzeilen +
+            # Dateizeilen zusammen) statt eines addTopLevelItem()-Aufrufs pro
+            # Zeile - siehe Kommentar oben, das ist der eigentliche Performance-
+            # Fix.
+            self.tree.addTopLevelItems(all_items)
+            for group_item in group_items:
+                group_item.setFirstColumnSpanned(True)
 
-        # Echtes QCheckBox-Widget statt der eingebauten Baum-Häkchen
-        # (Qt.ItemIsUserCheckable/setCheckState) - die werden von
-        # QTreeWidget unter dem hier nötigen Fusion-Stil (siehe
-        # _dark_fusion_palette) nachweislich nicht sichtbar gezeichnet (bei
-        # QTableWidget tritt derselbe Fehler nicht auf - per Pixelvergleich
-        # verifiziert). Muss NACH dem Einfügen ins Baum-Widget gesetzt
-        # werden (siehe addTopLevelItems() oben). setChecked() vor dem
-        # Verbinden von toggled(), damit der Aufbau selbst kein Signal
-        # auslöst.
-        for child, is_original, path_str in pending_checkboxes:
-            checkbox = QCheckBox()
-            prev = previous_checks.get(path_str)
-            if prev is not None and prev[1] == is_original:
-                checkbox.setChecked(prev[0])
-            else:
-                # Kein vorheriger Zustand bekannt, oder die Rolle
-                # (Original/Duplikat) hat sich seit dem letzten Aufbau
-                # geändert - dann gilt der rollenabhängige Standard, nicht
-                # das alte Häkchen (siehe Docstring oben).
-                checkbox.setChecked(not is_original)
-            checkbox.toggled.connect(self._update_move_button)
-            self.tree.setItemWidget(child, COL_CHECK, checkbox)
-
-        self.tree.setUpdatesEnabled(True)
-        self.tree.blockSignals(False)
+            # Echtes QCheckBox-Widget statt der eingebauten Baum-Häkchen
+            # (Qt.ItemIsUserCheckable/setCheckState) - die werden von
+            # QTreeWidget unter dem hier nötigen Fusion-Stil (siehe
+            # _dark_fusion_palette) nachweislich nicht sichtbar gezeichnet (bei
+            # QTableWidget tritt derselbe Fehler nicht auf - per Pixelvergleich
+            # verifiziert). Muss NACH dem Einfügen ins Baum-Widget gesetzt
+            # werden (siehe addTopLevelItems() oben). setChecked() vor dem
+            # Verbinden von toggled(), damit der Aufbau selbst kein Signal
+            # auslöst.
+            for child, is_original, path_str in pending_checkboxes:
+                checkbox = QCheckBox()
+                prev = previous_checks.get(path_str)
+                if prev is not None and prev[1] == is_original:
+                    checkbox.setChecked(prev[0])
+                else:
+                    # Kein vorheriger Zustand bekannt, oder die Rolle
+                    # (Original/Duplikat) hat sich seit dem letzten Aufbau
+                    # geändert - dann gilt der rollenabhängige Standard, nicht
+                    # das alte Häkchen (siehe Docstring oben).
+                    checkbox.setChecked(not is_original)
+                checkbox.toggled.connect(self._update_move_button)
+                self.tree.setItemWidget(child, COL_CHECK, checkbox)
+        finally:
+            self.tree.setUpdatesEnabled(True)
+            self.tree.blockSignals(False)
         self._update_move_button()
 
     def _on_current_item_changed(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
@@ -879,10 +893,21 @@ class DuplicateFinderApp(QWidget):
                 yield item
 
     def _set_all_checked(self, checked: bool) -> None:
+        # checkbox.toggled ist mit self._update_move_button verbunden (siehe
+        # _rebuild_tree()) - das würde bei jedem einzelnen setChecked() unten
+        # erneut _checked_paths() (ein voller O(n)-Durchlauf über den ganzen
+        # Baum) auslösen, macht "Alle auswählen/abwählen" also O(n²) statt
+        # O(n) (dieselbe Bug-Klasse wie der addTopLevelItem()-Fix in
+        # _rebuild_tree(), hier aber übersehen - siehe Review-Finding
+        # 07.09.2026). blockSignals() auf self.tree selbst wirkt NICHT auf
+        # die per setItemWidget() eingebetteten Checkbox-Widgets (eigene
+        # QObjects) - deshalb hier je Checkbox einzeln blocken.
         for child in self._iter_child_items():
             checkbox = self.tree.itemWidget(child, COL_CHECK)
             if checkbox is not None:
+                checkbox.blockSignals(True)
                 checkbox.setChecked(checked)
+                checkbox.blockSignals(False)
         self._update_move_button()
 
     def _reset_check_selection(self) -> None:

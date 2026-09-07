@@ -394,13 +394,15 @@ TEXTS: Texts = {
     "main_unexpected_error_text": {
         "de": (
             "Beim Scannen ist ein unerwarteter Fehler aufgetreten:\n\n{message}\n\n"
-            "Der vollständige technische Fehlerbericht wurde zusätzlich in "
-            "'.app_launch.log' im Projektordner gespeichert."
+            "Der vollständige technische Fehlerbericht wird zusätzlich in "
+            "'.app_launch.log' im Projektordner protokolliert, sofern die Datei "
+            "beschreibbar ist."
         ),
         "en": (
             "An unexpected error occurred while scanning:\n\n{message}\n\n"
-            "The full technical error report was additionally saved to "
-            "'.app_launch.log' in the project folder."
+            "The full technical error report is additionally logged to "
+            "'.app_launch.log' in the project folder, provided that file is "
+            "writable."
         ),
     },
 

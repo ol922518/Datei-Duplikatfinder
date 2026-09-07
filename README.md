@@ -28,14 +28,12 @@ im jeweiligen Skript/Bundle anzupassen):
   Fehler landen in `.app_launch.log` im Projektordner statt in der Konsole.
   Ein zweiter Doppelklick bei bereits laufender App holt das bestehende
   Fenster nach vorne, statt (wirkungslos) einen zweiten Prozess zu starten
-  (`LSMultipleInstancesProhibited`, getestet 07.09.2026). Frühere Versuche
-  zeigten bei einem selbstgebauten Bundle einen kosmetischen grauen Rand
-  ums Icon (siehe [ROADMAP.md](ROADMAP.md)) - diesmal zusätzlich das Icon
-  per Finder-eigenem "Benutzerdefiniertes Symbol"-Mechanismus gesetzt
-  (`NSWorkspace.setIcon_forFile_options_()`, nicht nur über
-  `CFBundleIconFile`), was den Rand umgehen sollte. **Noch nicht visuell
-  bestätigt** - bitte kurz im Finder prüfen, ob das Icon jetzt sauber
-  aussieht.
+  (`LSMultipleInstancesProhibited`). Frühere, von Hand gebaute Bundles
+  zeigten einen kosmetischen grauen Rand ums Icon - behoben, indem das Icon
+  zusätzlich per Finder-eigenem "Benutzerdefiniertes Symbol"-Mechanismus
+  gesetzt wird (`NSWorkspace.setIcon_forFile_options_()`, nicht nur über
+  `CFBundleIconFile`) - vom Nutzer am 07.09.2026 bestätigt: sauberes Icon,
+  kein Rand mehr.
 - **„App öffnen.command“** – Terminal-Fenster mit laufender Ausgabe bleibt
   sichtbar, dafür ohne jedes Icon-Risiko. Nutzt das fest hinterlegte Python
   unter `/opt/homebrew/opt/python@3.14/bin/python3.14`, dort muss

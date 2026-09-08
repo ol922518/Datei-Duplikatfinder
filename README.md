@@ -118,8 +118,12 @@ selbst betroffen war.
 
 Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
 (Grundgerüst identisch zum Datei-Umbenenner) die zur ausgewählten Zeile
-gehörende Datei an - PDF, Bilder (inkl. Zoom), Text/Markdown/CSV/JSON/YAML
-und Word (`.docx`, sofern `python-docx` installiert ist). Bei Bildern und
+gehörende Datei an - PDF, Bilder (inkl. Zoom), Text/Markdown/CSV/JSON/YAML,
+Word (`.docx`, sofern `python-docx` installiert ist) sowie **Videos**
+(`.mp4`/`.mov`/`.m4v`/`.avi`/`.mkv`/`.webm` - mit Play/Pause-Button und
+Fortschrittsleiste; läuft über Qts eingebautes FFmpeg-Backend, tatsächlich
+abspielbare Codecs hängen davon ab, nicht unterstützte Dateien zeigen eine
+Fehlermeldung statt eines leeren Players). Bei Bildern und
 PDF lässt sich mit dem **Trackpad navigieren**: Zwei-Finger-Wischen
 scrollt, Zusammen-/Auseinanderziehen (Pinch) zoomt. **Zoom und Bildausschnitt
 bleiben dabei beim Wechsel zur nächsten Datei erhalten** (als relativer

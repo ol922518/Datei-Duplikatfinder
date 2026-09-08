@@ -98,6 +98,13 @@ TEXTS: Texts = {
     },
     "viewer_docx_empty": {"de": "(leeres Dokument)", "en": "(empty document)"},
 
+    # -- document_viewer.py: Video --------------------------------------
+    "viewer_video_play_tooltip": {"de": "Wiedergabe starten/pausieren.", "en": "Start/pause playback."},
+    "viewer_video_error": {
+        "de": "Video konnte nicht abgespielt werden:\n{name}\n{error}",
+        "en": "Could not play video:\n{name}\n{error}",
+    },
+
     # -- main.py: Fenster/Hilfetexte ---------------------------------------
     "main_window_title": {"de": "Datei-Duplikatfinder", "en": "File Duplicate Finder"},
     "main_recursive_help": {

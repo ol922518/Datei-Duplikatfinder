@@ -12,6 +12,12 @@ Unterstützt:
 - Bilder (JPEG, PNG, TIFF, HEIC, ...) über Qts eingebaute Bildformate
 - Text/Markdown/CSV/JSON/YAML (reiner Text, Markdown mit einfacher Formatierung)
 - Word (.docx) als reiner Text (über python-docx, sofern installiert)
+- Videos (MP4/MOV/M4V/AVI/MKV/WEBM, siehe VIDEO_EXTENSIONS) über
+  QtMultimedia (QMediaPlayer/QVideoWidget) - Wiedergabe läuft über das
+  systemeigene Backend (macOS: AVFoundation), tatsächlich abspielbare
+  Formate/Codecs hängen davon ab (MP4/MOV mit H.264 praktisch immer,
+  z.B. manche AVI/MKV-Varianten nicht garantiert - dann erscheint statt
+  des Players eine Fehlermeldung, siehe _on_video_error())
 
 Bedienung bei Bildern/PDF: Zwei-Finger-Wischen auf dem Trackpad scrollt
 (hoch/runter/links/rechts, über Qts eingebaute Scroll-Behandlung von
@@ -34,8 +40,10 @@ duplicate_engine.reverse_geocode()) - nie automatisch.
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtCore import QEvent, QTimer, QUrl, Qt
 from PySide6.QtGui import QPixmap
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -44,6 +52,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSlider,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -60,6 +69,7 @@ try:
 except ImportError:
     pass
 MARKDOWN_EXTENSIONS = {".md"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
 ZOOM_STEP = 1.25
 ZOOM_MIN = 0.1
@@ -93,6 +103,9 @@ class DocumentViewer(QWidget):
         # GPS-Koordinaten des aktuell angezeigten Fotos (falls vorhanden) -
         # Grundlage für den Button "🌐 Ort ermitteln" (siehe _on_geocode_clicked).
         self._current_photo_gps: tuple[float, float] | None = None
+        # Nur für die Fehlermeldung bei _on_video_error() - QMediaPlayer
+        # kennt selbst keinen Dateinamen, nur die geladene Quelle.
+        self._current_video_name: str = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -186,6 +199,48 @@ class DocumentViewer(QWidget):
         self.pdf_view.setZoomFactor(1.0)
         self.stack.addWidget(self.pdf_view)
 
+        # Video-Ansicht: QVideoWidget (Bildausgabe) + kleine Bedienleiste
+        # (Play/Pause, Fortschritt, Zeit) darunter - beides zusammen als
+        # eine einzige Stack-Seite (self.video_page), da eine Stack-Seite
+        # immer genau ein Widget ist.
+        self.video_page = QWidget()
+        video_page_layout = QVBoxLayout(self.video_page)
+        video_page_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_widget = QVideoWidget()
+        video_page_layout.addWidget(self.video_widget, 1)
+
+        video_controls = QWidget()
+        video_controls_layout = QHBoxLayout(video_controls)
+        video_controls_layout.setContentsMargins(0, 4, 0, 0)
+        self.video_play_btn = QPushButton("▶")
+        self.video_play_btn.setFixedWidth(32)
+        self.video_play_btn.setToolTip(t("viewer_video_play_tooltip"))
+        self.video_play_btn.clicked.connect(self._toggle_video_playback)
+        video_controls_layout.addWidget(self.video_play_btn)
+        self.video_position_slider = QSlider(Qt.Horizontal)
+        self.video_position_slider.setRange(0, 0)
+        # sliderMoved (nur bei Nutzer-Zieh-Bewegung) statt valueChanged
+        # (würde auch die automatischen Positions-Updates während der
+        # Wiedergabe wieder zurück in den Player schreiben und ihn so
+        # dauerhaft an Position 0 festnageln).
+        self.video_position_slider.sliderMoved.connect(self._seek_video)
+        video_controls_layout.addWidget(self.video_position_slider, 1)
+        self.video_time_label = QLabel("0:00 / 0:00")
+        self.video_time_label.setFixedWidth(90)
+        self.video_time_label.setAlignment(Qt.AlignCenter)
+        video_controls_layout.addWidget(self.video_time_label)
+        video_page_layout.addWidget(video_controls)
+        self.stack.addWidget(self.video_page)
+
+        self.media_player = QMediaPlayer(self)
+        self.audio_output = QAudioOutput(self)
+        self.media_player.setAudioOutput(self.audio_output)
+        self.media_player.setVideoOutput(self.video_widget)
+        self.media_player.playbackStateChanged.connect(self._on_video_playback_state_changed)
+        self.media_player.positionChanged.connect(self._on_video_position_changed)
+        self.media_player.durationChanged.connect(self._on_video_duration_changed)
+        self.media_player.errorOccurred.connect(self._on_video_error)
+
         # Pinch-Zoom per Trackpad (macOS: "Zusammen-/Auseinanderziehen") -
         # Qt liefert das als natives Gesten-Event an das Widget unter dem
         # Mauszeiger, hier also die Viewports von Bild-/PDF-Ansicht (siehe
@@ -216,6 +271,7 @@ class DocumentViewer(QWidget):
         self.title_label.setText(t("viewer_title_default"))
         self._current_pixmap = None
         self._update_photo_meta_bar(None)
+        self.media_player.stop()
         self._set_active_page(self.empty_page)
 
     def show_file(self, path: Path) -> None:
@@ -229,6 +285,12 @@ class DocumentViewer(QWidget):
         # die rechte untere Ecke gezoomte Stelle beim Vergleichen mehrerer
         # Duplikate an derselben Stelle sichtbar.
         self._update_photo_meta_bar(None)
+        # Läuft gerade ein Video, MUSS die Wiedergabe hier gestoppt werden -
+        # sonst liefe der Ton unhörbar sichtbar im Hintergrund weiter, auch
+        # wenn längst eine andere (nicht-Video-)Datei angezeigt wird. Auch
+        # unkritisch, wenn gerade gar kein Video lief (stop() auf einem
+        # bereits gestoppten Player ist ein No-Op).
+        self.media_player.stop()
 
         if not path.exists():
             self._show_message(t("viewer_file_not_found").format(name=path.name))
@@ -239,6 +301,8 @@ class DocumentViewer(QWidget):
             self._show_pdf(path)
         elif ext == ".docx":
             self._show_docx(path)
+        elif ext in VIDEO_EXTENSIONS:
+            self._show_video(path)
         elif ext in engine.TEXT_EXTENSIONS:
             self._show_text(path, markdown=ext in MARKDOWN_EXTENSIONS)
         else:
@@ -291,6 +355,20 @@ class DocumentViewer(QWidget):
         # Verzögert (siehe _defer_scroll_restore()) statt direkt hier -
         # dieselbe Begründung wie in _show_pdf().
         self._defer_scroll_restore(self.image_scroll)
+
+    def _show_video(self, path: Path) -> None:
+        self._current_video_name = path.name
+        self.video_position_slider.setRange(0, 0)
+        self.video_time_label.setText("0:00 / 0:00")
+        self.media_player.setSource(QUrl.fromLocalFile(str(path)))
+        self._set_active_page(self.video_page)
+        # Startet automatisch, statt einen zusätzlichen ersten Klick auf
+        # "▶" zu verlangen - passend zum Rest des Viewers, der ebenfalls
+        # sofort die volle Vorschau zeigt. Ein evtl. Abspiel-Fehler (z.B.
+        # nicht unterstützter Codec) kommt asynchron über errorOccurred
+        # (siehe _on_video_error()), nicht als Rückgabewert hier - anders
+        # als z.B. bei _show_pdf().
+        self.media_player.play()
 
     @staticmethod
     def _format_place(lat: float, lon: float, cached: dict | None) -> str:
@@ -398,6 +476,56 @@ class DocumentViewer(QWidget):
             return
         self.text_view.setPlainText(text or t("viewer_docx_empty"))
         self._set_active_page(self.text_view)
+
+    # ------------------------------------------------------------------
+    # Video
+    # ------------------------------------------------------------------
+    def _toggle_video_playback(self) -> None:
+        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.media_player.pause()
+        else:
+            self.media_player.play()
+
+    def _on_video_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+        playing = state == QMediaPlayer.PlaybackState.PlayingState
+        self.video_play_btn.setText("⏸" if playing else "▶")
+
+    def _on_video_duration_changed(self, duration_ms: int) -> None:
+        self.video_position_slider.setRange(0, duration_ms)
+        self._update_video_time_label()
+
+    def _on_video_position_changed(self, position_ms: int) -> None:
+        # Während der Nutzer selbst am Schieberegler zieht (isSliderDown())
+        # nicht überschreiben - sonst "kämpft" die laufende Wiedergabe
+        # gegen die Zieh-Bewegung.
+        if not self.video_position_slider.isSliderDown():
+            self.video_position_slider.setValue(position_ms)
+        self._update_video_time_label()
+
+    def _seek_video(self, position_ms: int) -> None:
+        self.media_player.setPosition(position_ms)
+
+    def _update_video_time_label(self) -> None:
+        current = self._format_video_time(self.media_player.position())
+        total = self._format_video_time(self.media_player.duration())
+        self.video_time_label.setText(f"{current} / {total}")
+
+    @staticmethod
+    def _format_video_time(milliseconds: int) -> str:
+        total_seconds = max(0, milliseconds) // 1000
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes}:{seconds:02d}"
+
+    def _on_video_error(self, error: QMediaPlayer.Error, error_string: str) -> None:
+        """QMediaPlayer meldet einen Abspiel-Fehler (z.B. nicht
+        unterstützter Codec/Container) asynchron über dieses Signal, statt
+        wie z.B. QPdfDocument.load() einen Fehler-Rückgabewert direkt bei
+        _show_video() zu liefern - bis dahin zeigt der Stack also schon die
+        (leere/kaputte) Video-Seite an, wird hier auf die Hinweis-Seite mit
+        Fehlertext umgeschaltet."""
+        if error == QMediaPlayer.Error.NoError:
+            return
+        self._show_message(t("viewer_video_error").format(name=self._current_video_name, error=error_string))
 
     # ------------------------------------------------------------------
     # Zoom (Bilder + PDF)

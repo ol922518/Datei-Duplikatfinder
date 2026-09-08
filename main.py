@@ -20,6 +20,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -121,6 +122,10 @@ class DropZone(QFrame):
 # genau sein Zweck, siehe README.md), Start-Fehler darüber landen also
 # nur im Terminal, nicht in dieser Datei.
 CRASH_LOG_FILE = Path(__file__).resolve().parent / ".app_launch.log"
+
+# Name für den lokalen Einzelinstanz-Socket (siehe main()). Eindeutig genug,
+# um nicht mit anderen Apps zu kollidieren.
+SINGLE_INSTANCE_KEY = "datei-duplikatfinder-singleinstance-v1"
 
 
 def _log_unexpected_error(exc: Exception) -> None:
@@ -1183,19 +1188,81 @@ def _dark_fusion_palette() -> QPalette:
     return palette
 
 
+def _bring_running_instance_to_front() -> bool:
+    """Prüft per lokalem Socket, ob bereits eine Instanz läuft, und bittet sie
+    in diesem Fall, sich in den Vordergrund zu holen.
+
+    Der App-Bundle-Launcher startet main.py als eigenständigen
+    Python-Prozess (siehe Datei-Duplikatfinder.app/Contents/MacOS/launcher) -
+    macOS' "LSMultipleInstancesProhibited" allein verhindert einen erneuten
+    Doppelklick-Start dadurch nicht zuverlässig, daher dieser zusätzliche,
+    plattformunabhängige Qt-eigene Mechanismus.
+
+    Gibt True zurück, wenn bereits eine Instanz läuft (der Aufrufer soll sich
+    dann sofort beenden, ohne ein eigenes Fenster zu öffnen).
+    """
+    socket = QLocalSocket()
+    socket.connectToServer(SINGLE_INSTANCE_KEY)
+    if not socket.waitForConnected(200):
+        return False
+    socket.write(b"activate")
+    socket.waitForBytesWritten(200)
+    socket.disconnectFromServer()
+    return True
+
+
+def _start_single_instance_server(window: "DuplicateFinderApp") -> QLocalServer:
+    """Startet den Server, der weitere Startversuche entgegennimmt und das
+    bestehende Fenster nach vorne holt, statt eine zweite Instanz zuzulassen.
+    """
+    # Verwaiste Server-Datei entfernen (z.B. nach einem Absturz), sonst
+    # schlägt listen() fälschlich fehl, obwohl keine Instanz mehr läuft.
+    QLocalServer.removeServer(SINGLE_INSTANCE_KEY)
+    server = QLocalServer()
+    server.listen(SINGLE_INSTANCE_KEY)
+
+    def _on_new_connection() -> None:
+        connection = server.nextPendingConnection()
+        if connection is None:
+            return
+        connection.readyRead.connect(lambda: connection.readAll())
+        connection.disconnected.connect(connection.deleteLater)
+        if window.isMinimized():
+            window.showNormal()
+        else:
+            window.show()
+        window.raise_()
+        window.activateWindow()
+
+    server.newConnection.connect(_on_new_connection)
+    return server
+
+
 def main():
     from qt_app_kit.i18n import init as init_translations
 
+    app = QApplication([])
+
+    if _bring_running_instance_to_front():
+        # Es läuft bereits eine Instanz - diese wurde gerade in den
+        # Vordergrund geholt, hier also nichts weiter tun.
+        return
+
     init_translations(translations.TEXTS, language=engine.load_settings().get("language", "de"))
 
-    app = QApplication([])
     is_dark = _system_is_dark(app)
     app.setStyle("Fusion")
     if is_dark:
         app.setPalette(_dark_fusion_palette())
     window = DuplicateFinderApp()
     window.show()
+
+    # Muss am Leben gehalten werden, solange die App läuft (siehe Closure in
+    # _start_single_instance_server) - daher lokale Variable in diesem Scope,
+    # nicht z.B. in einer Hilfsfunktion, die sofort wieder zurückkehrt.
+    server = _start_single_instance_server(window)
     app.exec()
+    server.close()
 
 
 if __name__ == "__main__":

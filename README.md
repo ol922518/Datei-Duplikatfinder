@@ -27,8 +27,12 @@ im jeweiligen Skript/Bundle anzupassen):
 - **„Datei-Duplikatfinder.app“** – echtes App-Bundle, kein Terminal-Fenster.
   Fehler landen in `.app_launch.log` im Projektordner statt in der Konsole.
   Ein zweiter Doppelklick bei bereits laufender App holt das bestehende
-  Fenster nach vorne, statt (wirkungslos) einen zweiten Prozess zu starten
-  (`LSMultipleInstancesProhibited`). Frühere, von Hand gebaute Bundles
+  Fenster nach vorne, statt einen zweiten Prozess zu starten. Dafür sorgt
+  ein eigener Einzelinstanz-Mechanismus in `main.py` (lokaler Qt-Socket,
+  `QLocalServer`/`QLocalSocket`) - `LSMultipleInstancesProhibited` im
+  Info.plist allein reicht nicht, da der Launcher `main.py` als
+  eigenständigen Python-Prozess startet und macOS diesen Prozess nicht
+  zuverlässig dem App-Bundle zuordnet. Frühere, von Hand gebaute Bundles
   zeigten einen kosmetischen grauen Rand ums Icon - behoben, indem das Icon
   zusätzlich per Finder-eigenem "Benutzerdefiniertes Symbol"-Mechanismus
   gesetzt wird (`NSWorkspace.setIcon_forFile_options_()`, nicht nur über

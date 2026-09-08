@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import functools
 import subprocess
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -1189,80 +1187,26 @@ def _dark_fusion_palette() -> QPalette:
     return palette
 
 
-def _bring_running_instance_to_front() -> bool:
-    """Prüft per lokalem Socket, ob bereits eine Instanz läuft, und bittet sie
-    in diesem Fall, sich in den Vordergrund zu holen.
-
-    Der App-Bundle-Launcher startet main.py als eigenständigen
-    Python-Prozess (siehe Datei-Duplikatfinder.app/Contents/MacOS/launcher) -
-    macOS' "LSMultipleInstancesProhibited" allein verhindert einen erneuten
-    Doppelklick-Start dadurch nicht zuverlässig, daher dieser zusätzliche,
-    plattformunabhängige Qt-eigene Mechanismus.
-
-    Gibt True zurück, wenn bereits eine Instanz läuft (der Aufrufer soll sich
-    dann sofort beenden, ohne ein eigenes Fenster zu öffnen).
-    """
-    socket = QLocalSocket()
-    socket.connectToServer(SINGLE_INSTANCE_KEY)
-    if not socket.waitForConnected(200):
-        return False
-    print("[single-instance] Bereits laufende Instanz gefunden - hole sie nach vorne und beende mich.")
-    socket.write(b"activate")
-    socket.waitForBytesWritten(200)
-    socket.disconnectFromServer()
-    return True
-
-
-def _start_single_instance_server(window: "DuplicateFinderApp") -> QLocalServer:
-    """Startet den Server, der weitere Startversuche entgegennimmt und das
-    bestehende Fenster nach vorne holt, statt eine zweite Instanz zuzulassen.
-    """
-    # Verwaiste Server-Datei entfernen (z.B. nach einem Absturz), sonst
-    # schlägt listen() fälschlich fehl, obwohl keine Instanz mehr läuft.
-    QLocalServer.removeServer(SINGLE_INSTANCE_KEY)
-    server = QLocalServer()
-    server.listen(SINGLE_INSTANCE_KEY)
-
-    def _on_new_connection() -> None:
-        connection = server.nextPendingConnection()
-        if connection is None:
-            return
-        connection.readyRead.connect(lambda: connection.readAll())
-        connection.disconnected.connect(connection.deleteLater)
-        print("[single-instance] Zweiter Startversuch erkannt - hole Fenster nach vorne.")
-        if window.isMinimized():
-            window.showNormal()
-        else:
-            window.show()
-        # Auf macOS reicht raise_()/activateWindow() allein nicht, wenn eine
-        # andere App (z.B. der Finder) gerade aktiv ist - Qt bringt das
-        # Fenster damit nur innerhalb der eigenen App nach vorne, holt aber
-        # nicht die ganze App vor andere Apps. Dafür braucht es zusätzlich
-        # NSApplication.activateIgnoringOtherApps_() über PyObjC (bereits
-        # als Abhängigkeit für die OCR-Texterkennung vorhanden).
-        if sys.platform == "darwin":
-            try:
-                from AppKit import NSApplication
-
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-            except Exception as exc:
-                print(f"[single-instance] NSApplication-Aktivierung fehlgeschlagen: {exc}")
-        window.raise_()
-        window.activateWindow()
-
-    server.newConnection.connect(_on_new_connection)
-    return server
-
-
 def main():
     from qt_app_kit.i18n import init as init_translations
+    from qt_app_kit.single_instance import (
+        bring_running_instance_to_front,
+        start_single_instance_server,
+        wire_single_instance_server,
+    )
 
     app = QApplication([])
 
-    if _bring_running_instance_to_front():
+    if bring_running_instance_to_front(SINGLE_INSTANCE_KEY):
         # Es läuft bereits eine Instanz - diese wurde gerade in den
         # Vordergrund geholt, hier also nichts weiter tun.
         return
+
+    # Socket SOFORT beanspruchen, noch vor dem (u.U. spürbar langsameren)
+    # Aufbau des Hauptfensters - schließt das TOCTOU-Zeitfenster, in dem ein
+    # zweiter, fast gleichzeitiger Startversuch den Socket sonst hätte
+    # kapern können (siehe start_single_instance_server()'s Docstring).
+    server = start_single_instance_server(SINGLE_INSTANCE_KEY)
 
     init_translations(translations.TEXTS, language=engine.load_settings().get("language", "de"))
 
@@ -1272,11 +1216,8 @@ def main():
         app.setPalette(_dark_fusion_palette())
     window = DuplicateFinderApp()
     window.show()
+    wire_single_instance_server(server, window)
 
-    # Muss am Leben gehalten werden, solange die App läuft (siehe Closure in
-    # _start_single_instance_server) - daher lokale Variable in diesem Scope,
-    # nicht z.B. in einer Hilfsfunktion, die sofort wieder zurückkehrt.
-    server = _start_single_instance_server(window)
     app.exec()
     server.close()
 

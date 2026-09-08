@@ -24,7 +24,8 @@ send2trash>=1.8.0   # "🗑 Markierte Zeilen löschen" - verschiebt in den Papie
 # Nur macOS: sorgt dafür, dass ein zweiter Doppelklick auf das App-Bundle bei
 # bereits laufender App wirklich das bestehende Fenster vor andere Apps holt
 # (window.raise_()/activateWindow() von Qt allein reicht dafür nicht, wenn
-# gerade eine andere App aktiv ist - siehe main.py, _on_new_connection()).
+# gerade eine andere App aktiv ist - siehe qt_app_kit/single_instance.py,
+# wire_single_instance_server()).
 # Ohne dieses Paket läuft der Einzelinstanz-Mechanismus trotzdem, holt das
 # Fenster dann aber ggf. nicht zuverlässig nach vorne.
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"

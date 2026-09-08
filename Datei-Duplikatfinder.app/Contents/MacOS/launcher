@@ -15,10 +15,10 @@ if [[ ! -x "$PYTHON" ]]; then
     exit 1
 fi
 
-"$PYTHON" main.py >> "$LOG_FILE" 2>&1
-status=$?
+"$PYTHON" -u main.py >> "$LOG_FILE" 2>&1
+exit_status=$?
 
-if [[ $status -ne 0 ]]; then
+if [[ $exit_status -ne 0 ]]; then
     osascript -e "display alert \"Datei-Duplikatfinder abgestürzt\" message \"Details stehen in '.app_launch.log' im Projektordner.\" as critical"
 fi
-exit $status
+exit $exit_status

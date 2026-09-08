@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import subprocess
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
@@ -1205,6 +1206,7 @@ def _bring_running_instance_to_front() -> bool:
     socket.connectToServer(SINGLE_INSTANCE_KEY)
     if not socket.waitForConnected(200):
         return False
+    print("[single-instance] Bereits laufende Instanz gefunden - hole sie nach vorne und beende mich.")
     socket.write(b"activate")
     socket.waitForBytesWritten(200)
     socket.disconnectFromServer()
@@ -1227,10 +1229,24 @@ def _start_single_instance_server(window: "DuplicateFinderApp") -> QLocalServer:
             return
         connection.readyRead.connect(lambda: connection.readAll())
         connection.disconnected.connect(connection.deleteLater)
+        print("[single-instance] Zweiter Startversuch erkannt - hole Fenster nach vorne.")
         if window.isMinimized():
             window.showNormal()
         else:
             window.show()
+        # Auf macOS reicht raise_()/activateWindow() allein nicht, wenn eine
+        # andere App (z.B. der Finder) gerade aktiv ist - Qt bringt das
+        # Fenster damit nur innerhalb der eigenen App nach vorne, holt aber
+        # nicht die ganze App vor andere Apps. Dafür braucht es zusätzlich
+        # NSApplication.activateIgnoringOtherApps_() über PyObjC (bereits
+        # als Abhängigkeit für die OCR-Texterkennung vorhanden).
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSApplication
+
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception as exc:
+                print(f"[single-instance] NSApplication-Aktivierung fehlgeschlagen: {exc}")
         window.raise_()
         window.activateWindow()
 

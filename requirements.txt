@@ -20,3 +20,11 @@ send2trash>=1.8.0   # "🗑 Markierte Zeilen löschen" - verschiebt in den Papie
 
 # PDF- und Bild-Vorschau im Datei-Viewer brauchen kein weiteres Paket -
 # QtPdf/QtPdfWidgets sind bereits in PySide6 enthalten.
+
+# Nur macOS: sorgt dafür, dass ein zweiter Doppelklick auf das App-Bundle bei
+# bereits laufender App wirklich das bestehende Fenster vor andere Apps holt
+# (window.raise_()/activateWindow() von Qt allein reicht dafür nicht, wenn
+# gerade eine andere App aktiv ist - siehe main.py, _on_new_connection()).
+# Ohne dieses Paket läuft der Einzelinstanz-Mechanismus trotzdem, holt das
+# Fenster dann aber ggf. nicht zuverlässig nach vorne.
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"

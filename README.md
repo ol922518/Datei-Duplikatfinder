@@ -29,7 +29,9 @@ im jeweiligen Skript/Bundle anzupassen):
   Ein zweiter Doppelklick bei bereits laufender App holt das bestehende
   Fenster nach vorne, statt einen zweiten Prozess zu starten. Dafür sorgt
   ein eigener Einzelinstanz-Mechanismus in `main.py` (lokaler Qt-Socket,
-  `QLocalServer`/`QLocalSocket`) - `LSMultipleInstancesProhibited` im
+  `QLocalServer`/`QLocalSocket`, plus `NSApplication.activateIgnoringOtherApps_()`
+  via PyObjC, da Qts `raise_()`/`activateWindow()` allein die App nicht vor
+  andere, gerade aktive Apps holt) - `LSMultipleInstancesProhibited` im
   Info.plist allein reicht nicht, da der Launcher `main.py` als
   eigenständigen Python-Prozess startet und macOS diesen Prozess nicht
   zuverlässig dem App-Bundle zuordnet. Frühere, von Hand gebaute Bundles

@@ -119,7 +119,9 @@ selbst betroffen war.
 Rechts neben der Ergebnis-Tabelle zeigt ein **eingebauter Datei-Viewer**
 (Grundgerüst identisch zum Datei-Umbenenner) die zur ausgewählten Zeile
 gehörende Datei an - PDF, Bilder (inkl. Zoom), Text/Markdown/CSV/JSON/YAML,
-Word (`.docx`, sofern `python-docx` installiert ist) sowie **Videos**
+Word (`.docx`, sofern `python-docx` installiert ist), PowerPoint (`.pptx`,
+sofern `python-pptx` installiert ist - **nur Text je Folie**, keine
+Bilder/Layout/Formatierung) sowie **Videos**
 (`.mp4`/`.mov`/`.m4v`/`.avi`/`.mkv`/`.webm` - mit Play/Pause-Button und
 Fortschrittsleiste; läuft über Qts eingebautes FFmpeg-Backend, tatsächlich
 abspielbare Codecs hängen davon ab, nicht unterstützte Dateien zeigen eine

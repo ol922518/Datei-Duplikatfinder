@@ -105,6 +105,18 @@ TEXTS: Texts = {
         "en": "Could not play video:\n{name}\n{error}",
     },
 
+    # -- document_viewer.py: PowerPoint (nur Text) -----------------------
+    "viewer_pptx_missing_package": {
+        "de": "Keine Vorschau möglich: Paket 'python-pptx' ist nicht installiert.",
+        "en": "No preview possible: package 'python-pptx' is not installed.",
+    },
+    "viewer_pptx_read_failed": {
+        "de": "PowerPoint-Datei konnte nicht gelesen werden:\n{error}",
+        "en": "Could not read PowerPoint file:\n{error}",
+    },
+    "viewer_pptx_empty": {"de": "(leere Präsentation)", "en": "(empty presentation)"},
+    "viewer_pptx_slide_label": {"de": "— Folie {number} —", "en": "— Slide {number} —"},
+
     # -- main.py: Fenster/Hilfetexte ---------------------------------------
     "main_window_title": {"de": "Datei-Duplikatfinder", "en": "File Duplicate Finder"},
     "main_recursive_help": {

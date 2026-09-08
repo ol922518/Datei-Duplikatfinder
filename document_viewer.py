@@ -12,6 +12,10 @@ Unterstützt:
 - Bilder (JPEG, PNG, TIFF, HEIC, ...) über Qts eingebaute Bildformate
 - Text/Markdown/CSV/JSON/YAML (reiner Text, Markdown mit einfacher Formatierung)
 - Word (.docx) als reiner Text (über python-docx, sofern installiert)
+- PowerPoint (.pptx) als reiner Text je Folie (über python-pptx, sofern
+  installiert) - nur Titel/Aufzählungspunkte, KEINE Bilder/Layout/
+  Formatierung (siehe _show_pptx()). Nur das moderne .pptx-Format, das
+  alte binäre .ppt wird nicht unterstützt.
 - Videos (MP4/MOV/M4V/AVI/MKV/WEBM, siehe VIDEO_EXTENSIONS) über
   QtMultimedia (QMediaPlayer/QVideoWidget) - Wiedergabe läuft über das
   systemeigene Backend (macOS: AVFoundation), tatsächlich abspielbare
@@ -66,6 +70,12 @@ try:
     import docx  # python-docx - Verfügbarkeit über engine.HAS_DOCX geprüft
     # (dieselbe Bibliothek, dort bereits erkannt), hier nur zusätzlich für
     # den direkten docx.Document(...)-Aufruf unten importiert.
+except ImportError:
+    pass
+try:
+    import pptx  # python-pptx - Verfügbarkeit über engine.HAS_PPTX geprüft,
+    # hier nur zusätzlich für den direkten pptx.Presentation(...)-Aufruf
+    # unten importiert (siehe _show_pptx()).
 except ImportError:
     pass
 MARKDOWN_EXTENSIONS = {".md"}
@@ -301,6 +311,8 @@ class DocumentViewer(QWidget):
             self._show_pdf(path)
         elif ext == ".docx":
             self._show_docx(path)
+        elif ext == ".pptx":
+            self._show_pptx(path)
         elif ext in VIDEO_EXTENSIONS:
             self._show_video(path)
         elif ext in engine.TEXT_EXTENSIONS:
@@ -475,6 +487,31 @@ class DocumentViewer(QWidget):
             self._show_message(t("viewer_docx_read_failed").format(error=e))
             return
         self.text_view.setPlainText(text or t("viewer_docx_empty"))
+        self._set_active_page(self.text_view)
+
+    def _show_pptx(self, path: Path) -> None:
+        """Zeigt nur den Text je Folie an (Titel/Aufzählungspunkte,
+        Trennzeile '— Folie N —') - keine Bilder, kein Layout, keine
+        Formatierung. Bewusst so einfach gehalten wie _show_docx() oben,
+        eine echte visuelle Folien-Vorschau bräuchte einen externen
+        Konverter (z.B. LibreOffice), den diese App nicht voraussetzt."""
+        if not engine.HAS_PPTX:
+            self._show_message(t("viewer_pptx_missing_package"))
+            return
+        try:
+            presentation = pptx.Presentation(str(path))
+            slide_texts = []
+            for i, slide in enumerate(presentation.slides, start=1):
+                lines = [t("viewer_pptx_slide_label").format(number=i)]
+                for shape in slide.shapes:
+                    if shape.has_text_frame and shape.text_frame.text.strip():
+                        lines.append(shape.text_frame.text.strip())
+                slide_texts.append("\n".join(lines))
+            text = "\n\n".join(slide_texts)
+        except Exception as e:
+            self._show_message(t("viewer_pptx_read_failed").format(error=e))
+            return
+        self.text_view.setPlainText(text or t("viewer_pptx_empty"))
         self._set_active_page(self.text_view)
 
     # ------------------------------------------------------------------

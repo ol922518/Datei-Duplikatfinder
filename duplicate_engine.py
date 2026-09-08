@@ -44,6 +44,15 @@ except ImportError:
     HAS_DOCX = False
 
 try:
+    import pptx  # python-pptx - fürs Anzeigen von .pptx-Dateien im Datei-Viewer
+    # (nur reiner Text je Folie, keine Bilder/Layout - siehe document_viewer.py
+    # _show_pptx(). Nur das moderne .pptx-Format (OOXML), das alte binäre
+    # .ppt wird von python-pptx nicht unterstützt.)
+    HAS_PPTX = True
+except ImportError:
+    HAS_PPTX = False
+
+try:
     # Verschiebt Dateien plattformübergreifend in den System-Papierkorb
     # (macOS/Windows/Linux) statt sie endgültig zu löschen - für den
     # "🗑 Markierte Zeilen löschen"-Button in main.py (siehe move_to_trash()
